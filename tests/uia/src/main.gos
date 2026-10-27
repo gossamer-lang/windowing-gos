@@ -1,0 +1,156 @@
+// The accessibility provider probe: a window describes a small semantic tree
+// (a button, a checkbox, a text field and a slider) through
+// `windowing::access` and applies what a screen reader asks of it. A client
+// in another process (`client.c`, over UI Automation) reads the tree, acts
+// on each control, and reads the results back once the probe prints
+// `updated`; moving focus to the button ends the probe. On macOS the probe
+// checks itself instead (`--self-check`): it reads the content view's
+// NSAccessibility children the way VoiceOver does, presses the button and
+// checks the request arrives.
+
+use std::{env, errors, process}
+use windowing
+use windowing::Event
+use windowing::access
+use windowing::access::AccessElement
+
+fn tree(checked: i64, name: String, volume: f64) -> Vec<AccessElement> {
+    #[
+        AccessElement { id: 1, role: "window", name: "UIA probe", width: 320, height: 200, children: #[2, 3, 4, 5], ..AccessElement::default() }
+        AccessElement { id: 2, role: "button", name: "Save", x: 10, y: 10, width: 100, height: 30, focusable: true, focused: true, actions: #["press"], ..AccessElement::default() }
+        AccessElement { id: 3, role: "checkbox", name: "Wrap lines", x: 10, y: 50, width: 140, height: 24, focusable: true, checked: checked, actions: #["press"], ..AccessElement::default() }
+        AccessElement { id: 4, role: "textfield", name: "Name", value: name, x: 10, y: 80, width: 200, height: 28, focusable: true, ..AccessElement::default() }
+        AccessElement { id: 5, role: "slider", name: "Volume", x: 10, y: 120, width: 200, height: 24, focusable: true, has_range: true, range_min: 0.0, range_max: 100.0, range_now: volume, ..AccessElement::default() }
+    ]
+}
+
+#[cfg(target_os = "macos")]
+mod appkit {
+    use std::{errors, ffi}
+    use std::ffi::Ptr
+
+    #[link(name = "objc")]
+    unsafe extern "C" {
+        fn sel_registerName(name: [u8]) -> Ptr<ffi::c_void>
+        #[link_name = "objc_msgSend"]
+        fn send_object(receiver: Ptr<ffi::c_void>, selector: Ptr<ffi::c_void>) -> Option<Ptr<ffi::c_void>>
+        #[link_name = "objc_msgSend"]
+        fn send_index(receiver: Ptr<ffi::c_void>, selector: Ptr<ffi::c_void>, index: u64) -> Option<Ptr<ffi::c_void>>
+        #[link_name = "objc_msgSend"]
+        fn send_count(receiver: Ptr<ffi::c_void>, selector: Ptr<ffi::c_void>) -> u64
+        #[link_name = "objc_msgSend"]
+        fn send_flag(receiver: Ptr<ffi::c_void>, selector: Ptr<ffi::c_void>) -> u8
+        #[link_name = "objc_msgSend"]
+        fn send_text(receiver: Ptr<ffi::c_void>, selector: Ptr<ffi::c_void>) -> Option<Ptr<u8>>
+    }
+
+    fn sel(name: String) -> Ptr<ffi::c_void> {
+        unsafe { sel_registerName(ffi::cstring(name).unwrap()) }
+    }
+
+    fn text(object: Option<Ptr<ffi::c_void>>) -> String {
+        let Some(o) = object else {
+            return ""
+        }
+        match unsafe { send_text(o, sel("UTF8String")) } {
+            Some(p) => unsafe { ffi::read_cstr(p) }.unwrap_or("")
+            None => ""
+        }
+    }
+
+    /// The role and label of each child of `view`, and whether pressing the
+    /// child labelled `press` succeeded.
+    pub fn children(view: Ptr<ffi::c_void>, press: String) -> Result<(Vec<String>, bool), errors::Error> {
+        let list = unsafe { send_object(view, sel("accessibilityChildren")) }.ok_or(errors::new("the content view has no accessibility children"))?
+        let mut out: Vec<String> = #[]
+        let mut pressed = false
+        for i in 0..unsafe { send_count(list, sel("count")) } {
+            let Some(child) = unsafe { send_index(list, sel("objectAtIndex:"), i) } else {
+                continue
+            }
+            let role = text(unsafe { send_object(child, sel("accessibilityRole")) })
+            let label = text(unsafe { send_object(child, sel("accessibilityLabel")) })
+            if label == press {
+                pressed = unsafe { send_flag(child, sel("accessibilityPerformPress")) } != 0
+            }
+            out.push(f"{role} {label}")
+        }
+        Ok((out, pressed))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn self_check(win: windowing::Window) -> Result<(), errors::Error> {
+    let Ok(windowing::RawHandle::AppKit { ns_view: Some(view), .. }) = win.raw_handle() else {
+        return Err(errors::new("the window has no AppKit content view"))
+    }
+    let seen, pressed = appkit::children(view, "Save")?
+    for line in seen {
+        println(f"child: {line}")
+    }
+    println(f"press: {pressed}")
+    let requests = access::take_requests()
+    println(f"requests: {requests.map(|r| f"{r.id} {r.action}")}")
+    if !pressed || requests.is_empty() || requests[0].action != "press" {
+        return Err(errors::new("pressing the button reached no request"))
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn self_check(_win: windowing::Window) -> Result<(), errors::Error> {
+    Err(errors::new("--self-check reads NSAccessibility, which needs macOS"))
+}
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("UIA probe")?
+    defer app.finalize()
+    let win = app.window(title: "UIA probe", width: 320, height: 200)?
+    let mut frame = win.framebuffer()?
+    frame.fill(240, 240, 240)
+    win.present(frame)?
+    println(f"provider: {access::has_provider()}")
+    let mut checked = 0
+    let mut name = "Ada"
+    let mut volume = 40.0
+    access::update(win, tree(checked, name, volume))?
+    access::focus(win, 2)?
+    if env::args().contains("--self-check") {
+        return self_check(win)
+    }
+    println("probe ready")
+    let mut handled = 0
+    loop {
+        match app.wait()? {
+            Event::Wake => {
+                for r in access::take_requests() {
+                    println(f"request: {r.id} {r.action} {r.value}")
+                    match r.action {
+                        "press" if r.id == 3 => checked = 1 - checked
+                        "set-text" if r.id == 4 => name = r.value
+                        "set-value" if r.id == 5 => volume = r.value.to_f64().unwrap_or(volume)
+                        "focus" if r.id == 2 => {
+                            println("focus returned")
+                            return Ok(())
+                        }
+                        _ => ()
+                    }
+                    handled += 1
+                }
+                access::update(win, tree(checked, name, volume))?
+                if handled >= 4 {
+                    println("updated")
+                }
+            }
+            Event::QuitRequested => return Ok(())
+            _ => ()
+        }
+    }
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"uia probe: {e}")
+        process::exit(1)
+    }
+}

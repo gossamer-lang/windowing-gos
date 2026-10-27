@@ -1,0 +1,264 @@
+// Events: what happened to the application, a window, a display, or an
+// input device. The Rust core decodes SDL's events and hands each over in
+// the encoded shape these types read back.
+
+use crate::dialog::{DialogChoice, DialogId}
+use crate::display::{DisplayId, Orientation}
+use crate::keys::{Key, Scancode}
+use crate::drag::{DragId, DragOperation}
+use crate::menu::MenuSource
+use crate::system::Theme
+use crate::window::WindowId
+
+/// The modifier keys held during a key or pointer event. `gui` is the
+/// Windows key, Command on macOS, Super elsewhere.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    pub shift: bool
+    pub ctrl: bool
+    pub alt: bool
+    pub gui: bool
+    /// AltGr, the third-level shift some layouts type with.
+    pub alt_gr: bool
+    pub caps_lock: bool
+    pub num_lock: bool
+    pub scroll_lock: bool
+}
+
+impl Mods {
+    /// The modifier a platform's shortcuts use: Command on macOS, Ctrl
+    /// everywhere else.
+    #[cfg(target_os = "macos")]
+    pub fn shortcut(&self) -> bool {
+        self.gui
+    }
+
+    /// The modifier a platform's shortcuts use: Command on macOS, Ctrl
+    /// everywhere else.
+    #[cfg(not(target_os = "macos"))]
+    pub fn shortcut(&self) -> bool {
+        self.ctrl
+    }
+}
+
+/// A mouse button.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MouseButton {
+    Left
+    Middle
+    Right
+    /// The first side button, usually "back".
+    Back
+    /// The second side button, usually "forward".
+    Forward
+    Other(i64)
+}
+
+/// The mouse buttons held during a motion.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Buttons {
+    pub left: bool
+    pub middle: bool
+    pub right: bool
+    pub back: bool
+    pub forward: bool
+}
+
+/// What produced a pointer event: a mouse, or a touch or pen the platform
+/// also reports as the pointer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PointerSource {
+    Mouse
+    Touch
+    Pen
+}
+
+/// A pen's state during a pen event.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PenState {
+    /// Whether the tip touches the surface.
+    pub down: bool
+    /// Whether the eraser end is the one in use.
+    pub eraser: bool
+    /// The barrel buttons held, first to third.
+    pub primary_button: bool
+    pub secondary_button: bool
+    pub tertiary_button: bool
+}
+
+/// A pen axis a `PenAxis` event reports.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PenAxis {
+    /// Tip pressure, 0 to 1.
+    Pressure
+    /// Tilt along the x axis in degrees, -90 to 90.
+    TiltX
+    /// Tilt along the y axis in degrees, -90 to 90.
+    TiltY
+    /// Distance from the surface, 0 to 1.
+    Distance
+    /// Barrel rotation in degrees, -180 to 180.
+    Rotation
+    /// A finger wheel or slider, 0 to 1.
+    Slider
+    /// Pressure on a tangential sensor, 0 to 1.
+    TangentialPressure
+    Other(i64)
+}
+
+/// Something that happened to the application, a window, a display, or an
+/// input device. `window` is the window the event belongs to; an input
+/// event no window has focus for carries the id 0, which no window has.
+#[derive(Debug)]
+pub enum Event {
+    /// The user or the system asked the application to quit.
+    QuitRequested
+    /// The system is ending the application now (mobile platforms).
+    Terminating
+    /// The system is short of memory; free what can be freed.
+    LowMemory
+    /// The application is about to move to the background.
+    Suspending
+    /// The application is in the background.
+    Suspended
+    /// The application is about to return to the foreground.
+    Resuming
+    /// The application is in the foreground again.
+    Resumed
+    LocaleChanged
+    ThemeChanged { theme: Theme }
+    /// The keyboard layout changed, so keys map to other characters.
+    KeymapChanged
+    /// The clipboard's contents changed; `owned` when this application
+    /// set them.
+    ClipboardChanged { owned: bool }
+    /// A `Waker` woke the loop.
+    Wake
+    /// A window should be drawn: it was exposed, or `request_redraw` asked.
+    /// GPU device or render targets were lost; recreate renderer resources.
+    RenderReset { window: WindowId }
+    RedrawRequested { window: WindowId }
+    /// A file or folder dialog the application opened was closed.
+    DialogClosed { dialog: DialogId, choice: DialogChoice }
+    DisplayAdded { display: DisplayId }
+    DisplayRemoved { display: DisplayId }
+    DisplayMoved { display: DisplayId }
+    DisplayModeChanged { display: DisplayId }
+    DisplayScaleChanged { display: DisplayId }
+    DisplayUsableBoundsChanged { display: DisplayId }
+    DisplayOrientationChanged { display: DisplayId, orientation: Orientation }
+    WindowShown { window: WindowId }
+    WindowHidden { window: WindowId }
+    /// The window moved; its position in logical desktop coordinates.
+    Moved { window: WindowId, x: i64, y: i64 }
+    /// The window's logical size changed.
+    Resized { window: WindowId, width: i64, height: i64 }
+    /// The window's size in pixels changed (a resize, or a scale change).
+    PixelSizeChanged { window: WindowId, width: i64, height: i64 }
+    /// The window's scale changed, usually by moving to another display.
+    ScaleChanged { window: WindowId, scale: f64 }
+    Minimized { window: WindowId }
+    Maximized { window: WindowId }
+    Restored { window: WindowId }
+    PointerEntered { window: WindowId }
+    PointerLeft { window: WindowId }
+    FocusGained { window: WindowId }
+    FocusLost { window: WindowId }
+    /// The user asked to close the window. It stays open until closed.
+    CloseRequested { window: WindowId }
+    DisplayChanged { window: WindowId, display: DisplayId }
+    /// The window is fully covered and need not be drawn.
+    Occluded { window: WindowId }
+    EnteredFullscreen { window: WindowId }
+    LeftFullscreen { window: WindowId }
+    /// A key went down. `key` is what the layout names it, for shortcuts;
+    /// `scancode` its position, for position-based controls. Text never
+    /// comes from key events: see `Text`.
+    KeyDown { window: WindowId, key: Key, scancode: Scancode, mods: Mods, repeat: bool }
+    KeyUp { window: WindowId, key: Key, scancode: Scancode, mods: Mods }
+    /// Text the user committed: typed, chosen in an input method, pasted by
+    /// the system. Arrives only while the window takes text input.
+    Text { window: WindowId, text: String }
+    /// Input-method text being composed and not yet committed. `cursor` is
+    /// the caret's character offset in `text`, `selection` the length of
+    /// the selected run after it.
+    Composing { window: WindowId, text: String, cursor: i64, selection: i64 }
+    /// The pointer moved, to `x`, `y` in the window's logical coordinates,
+    /// by `dx`, `dy` (relative mode reports only the deltas usefully).
+    PointerMoved {
+        window: WindowId
+        x: f64
+        y: f64
+        dx: f64
+        dy: f64
+        buttons: Buttons
+        source: PointerSource
+    }
+    ButtonDown {
+        window: WindowId
+        button: MouseButton
+        x: f64
+        y: f64
+        clicks: i64
+        source: PointerSource
+    }
+    ButtonUp {
+        window: WindowId
+        button: MouseButton
+        x: f64
+        y: f64
+        clicks: i64
+        source: PointerSource
+    }
+    /// A scroll: `dx`, `dy` in wheel notches, fractional for precise
+    /// touchpads, positive away from the user and to the right whatever the
+    /// platform's natural-scrolling setting; `x`, `y` where the pointer is.
+    Wheel { window: WindowId, dx: f64, dy: f64, x: f64, y: f64 }
+    /// A finger touched the window, at `x`, `y` in its logical coordinates.
+    TouchDown { window: WindowId, device: u64, finger: u64, x: f64, y: f64, pressure: f64 }
+    TouchMoved {
+        window: WindowId
+        device: u64
+        finger: u64
+        x: f64
+        y: f64
+        dx: f64
+        dy: f64
+        pressure: f64
+    }
+    TouchUp { window: WindowId, device: u64, finger: u64, x: f64, y: f64 }
+    /// The system took a touch over (a gesture of its own); treat it as up.
+    TouchCancelled { window: WindowId, device: u64, finger: u64 }
+    PinchBegan { window: WindowId }
+    /// A pinch gesture; `scale` relative to where it began.
+    Pinch { window: WindowId, scale: f64 }
+    PinchEnded { window: WindowId }
+    PenEntered { window: WindowId, pen: u32 }
+    PenLeft { window: WindowId, pen: u32 }
+    PenDown { window: WindowId, pen: u32, x: f64, y: f64, eraser: bool }
+    PenUp { window: WindowId, pen: u32, x: f64, y: f64, eraser: bool }
+    PenMoved { window: WindowId, pen: u32, x: f64, y: f64, state: PenState }
+    PenButtonDown { window: WindowId, pen: u32, button: i64, x: f64, y: f64 }
+    PenButtonUp { window: WindowId, pen: u32, button: i64, x: f64, y: f64 }
+    PenAxisChanged { window: WindowId, pen: u32, axis: PenAxis, value: f64, x: f64, y: f64 }
+    /// A drag entered the window.
+    DropBegan { window: WindowId }
+    /// A drag moved over the window.
+    DropMoved { window: WindowId, x: f64, y: f64 }
+    /// A file was dropped; one event per file.
+    DroppedFile { window: WindowId, path: String, x: f64, y: f64 }
+    DroppedText { window: WindowId, text: String, x: f64, y: f64 }
+    /// The drag left the window or every item was dropped.
+    DropEnded { window: WindowId, x: f64, y: f64 }
+    /// The system asked the running application to open `path`, outside any
+    /// window (macOS delivers documents this way; Linux uses `instance`).
+    OpenRequested { path: String }
+    /// The user chose the native menu item `item` (the program's identity).
+    MenuSelected { source: MenuSource, item: u32 }
+    /// A drag `App::start_drag` began ended; `operation` is what the target
+    /// did, `None` when nothing accepted the drop or it was cancelled.
+    DragFinished { drag: DragId, operation: Option<DragOperation> }
+    /// The desktop's contrast, motion, accent, or text-size preferences may
+    /// have changed; `system::preferences()` reads them.
+    PreferencesChanged
+}

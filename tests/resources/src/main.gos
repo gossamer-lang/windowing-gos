@@ -1,0 +1,29 @@
+// Linux lifecycle audit: repeated native sessions must close display resources.
+use std::{env, errors, fs}
+use windowing
+
+fn cycle() -> Result<(), errors::Error> {
+    let app = windowing::init("Resource lifecycle", app_id: "dev.gossamer.windowing.resources")?
+    defer app.finalize()
+    let win = app.window(title: "Lifecycle", width: 64, height: 48)?
+    let mut frame = win.framebuffer()?
+    frame.fill(20, 30, 40)
+    win.present(frame)?
+    win.close()
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> Result<(), errors::Error> {
+    cycle()?
+    let descriptors = fs::read_dir("/proc/self/fd")?.len()
+    let cycles = env::var("WINDOWING_RESOURCE_CYCLES").unwrap_or("32").to_i64().unwrap_or(32).max(1)
+    for _ in 0..cycles {
+        cycle()?
+        assert(fs::read_dir("/proc/self/fd")?.len() == descriptors)
+    }
+    println(f"{cycles + 1} sessions closed; descriptors stable at {descriptors}")
+    Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+fn main() -> Result<(), errors::Error> { cycle() }

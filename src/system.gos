@@ -1,0 +1,90 @@
+// What the desktop says about itself and does for the program: its theme,
+// the user's languages, opening links and folders, the screensaver, and the
+// appearance and accessibility preferences the user set.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::support
+
+/// The desktop's light or dark appearance.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Theme {
+    Light
+    Dark
+    /// The platform does not say.
+    Unknown
+}
+
+/// A language the user prefers: an ISO 639 code (`"en"`), and an ISO 3166
+/// country code (`"GB"`) where one is set.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Locale {
+    pub language: String
+    pub country: Option<String>
+}
+
+/// The desktop's theme now; `Event::ThemeChanged` reports changes.
+pub fn theme() -> Theme {
+    support::require_main_thread("windowing::system::theme")
+    json::decode::<Theme>(windowing_desktop::system_theme()).unwrap_or(Theme::Unknown)
+}
+
+/// The user's languages, most preferred first.
+pub fn locales() -> Result<Vec<Locale>, errors::Error> {
+    let text = support::ok(windowing_desktop::system_locales())?
+    json::decode::<LocaleList>(f"{{\"items\":{text}}}").map(|l| l.items).map_err(|e| errors::wrap(e, "reading the locales"))
+}
+
+/// Opens `url` in the program the desktop associates with it: a web page in
+/// the browser, a `file://` URL in its viewer or file manager.
+pub fn open_url(url: String) -> Result<(), errors::Error> {
+    support::ok(windowing_desktop::system_open_url(url))
+}
+
+/// Shows the folder holding `file` in the desktop's file manager.
+pub fn reveal(file: String) -> Result<(), errors::Error> {
+    support::ok(windowing_desktop::system_reveal(file))
+}
+
+/// Keeps the screensaver and display sleep away while `inhibited`, for
+/// video and presentations.
+pub fn inhibit_screensaver(inhibited: bool) -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::system::inhibit_screensaver")
+    support::ok(windowing_desktop::system_inhibit_screensaver(inhibited))
+}
+
+/// Whether the screensaver may run.
+pub fn screensaver_enabled() -> bool {
+    support::require_main_thread("windowing::system::screensaver_enabled")
+    windowing_desktop::system_screensaver_enabled()
+}
+
+/// What the desktop says about the user's appearance and accessibility
+/// preferences; each is `None` where the platform does not say.
+#[derive(Debug, Default, PartialEq)]
+pub struct Preferences {
+    /// Higher contrast than the normal theme.
+    pub high_contrast: Option<bool>
+    /// Few or no animations.
+    pub reduced_motion: Option<bool>
+    /// The accent color, as sRGB red, green, and blue.
+    pub accent: Option<(u8, u8, u8)>
+    /// The factor the desktop scales text by beyond the display's content
+    /// scale, 1.0 at the normal size.
+    pub text_scale: Option<f64>
+}
+
+/// The desktop's preferences now. From the first call on, the session
+/// watches them, and `Event::PreferencesChanged` says to read them again.
+pub fn preferences() -> Preferences {
+    support::require_main_thread("windowing::system::preferences")
+    json::decode::<Preferences>(windowing_desktop::system_preferences()).unwrap_or(Preferences::default())
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct LocaleList {
+    items: Vec<Locale>
+}

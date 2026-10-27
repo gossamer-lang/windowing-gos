@@ -1,0 +1,154 @@
+// The platform-service probe: on the platform's own video driver, applies a
+// dark and then a light frame theme, a Mica backdrop and a notification to
+// a real window, and prints one line per service with what the platform
+// answered. On Windows it reads the frame and backdrop attributes back from
+// the Desktop Window Manager, so a line saying `read back` is the system's
+// own account; on X11 it reads the frame theme back from the window's
+// `_GTK_THEME_VARIANT` property. `--expect-dwm` makes a missing read-back a
+// failure (Windows 11 22H2 and later answer both).
+
+use std::{env, errors, process}
+use windowing
+use windowing::{Backdrop, Event, Notification, Theme}
+
+#[cfg(target_os = "windows")]
+mod dwm {
+    use std::ffi
+    use std::ffi::Ptr
+
+    #[link(name = "dwmapi")]
+    unsafe extern "C" {
+        fn DwmGetWindowAttribute(hwnd: Ptr<ffi::c_void>, attribute: u32, value: &mut i32, size: u32) -> i32
+    }
+
+    /// The DWM attribute `attribute` of `hwnd`, or `None` when DWM keeps it to itself.
+    pub fn attribute(hwnd: Ptr<ffi::c_void>, attribute: u32) -> Option<i32> {
+        let mut value: i32 = -1
+        if unsafe { DwmGetWindowAttribute(hwnd, attribute, &mut value, 4) } < 0 {
+            return None
+        }
+        Some(value)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn read_back(win: windowing::Window, attribute: u32) -> Option<i32> {
+    match win.raw_handle() {
+        Ok(windowing::RawHandle::Win32 { hwnd, .. }) => dwm::attribute(hwnd, attribute)
+        _ => None
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod x11 {
+    use std::ffi
+    use std::ffi::Ptr
+
+    #[link(name = "X11")]
+    unsafe extern "C" {
+        fn XInternAtom(display: Ptr<ffi::c_void>, name: [u8], only_if_exists: i32) -> u64
+        fn XGetWindowProperty(display: Ptr<ffi::c_void>, window: u64, property: u64, offset: i64, length: i64, delete: i32, requested: u64, actual_type: &mut u64, actual_format: &mut i32, items: &mut u64, after: &mut u64, data: &mut Option<Ptr<u8>>) -> i32
+        fn XFree(data: Ptr<u8>) -> i32
+    }
+
+    /// 1 for a dark `_GTK_THEME_VARIANT`, 0 for light, `None` without one.
+    pub fn variant(display: Ptr<ffi::c_void>, window: u64) -> Option<i32> {
+        let property = unsafe { XInternAtom(display, ffi::cstring("_GTK_THEME_VARIANT").unwrap(), 0) }
+        let mut kind: u64 = 0
+        let mut bits: i32 = 0
+        let mut items: u64 = 0
+        let mut after: u64 = 0
+        let mut data: Option<Ptr<u8>> = None
+        // AnyPropertyType is 0.
+        let _ = unsafe { XGetWindowProperty(display, window, property, 0, 16, 0, 0, &mut kind, &mut bits, &mut items, &mut after, &mut data) }
+        let bytes = data?
+        let text = String::from_utf8(unsafe { ffi::read_bytes(bytes, items as i64) }).unwrap_or("")
+        let _ = unsafe { XFree(bytes) }
+        match text {
+            "dark" => Some(1)
+            "light" => Some(0)
+            _ => None
+        }
+    }
+}
+
+// The frame theme is attribute 20; X11 has no backdrop.
+#[cfg(target_os = "linux")]
+fn read_back(win: windowing::Window, attribute: u32) -> Option<i32> {
+    match win.raw_handle() {
+        Ok(windowing::RawHandle::Xlib { display, window, .. }) if attribute == 20 => x11::variant(display, window)
+        _ => None
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn read_back(_win: windowing::Window, _attribute: u32) -> Option<i32> {
+    None
+}
+
+fn outcome(result: Result<(), errors::Error>) -> String {
+    match result {
+        Ok(()) => "ok"
+        Err(e) => f"unavailable ({e.message()})"
+    }
+}
+
+fn check(label: String, result: Result<(), errors::Error>, read: Option<i32>, want: i32, expect: bool) -> Result<(), errors::Error> {
+    let mut line = f"{label}: {outcome(result)}"
+    match read {
+        Some(v) => {
+            line += f", read back {v}"
+            if result.is_ok() && v != want {
+                println(line)
+                return Err(errors::new(f"{label}: the window system reads back {v}, not {want}"))
+            }
+        }
+        None => {
+            if expect {
+                println(line)
+                return Err(errors::new(f"{label}: the window system did not read the attribute back"))
+            }
+        }
+    }
+    println(line)
+    Ok(())
+}
+
+fn run() -> Result<(), errors::Error> {
+    let expect = env::args().contains("--expect-dwm")
+    let app = windowing::init("Platform probe", app_id: "dev.gossamer.windowing.platform")?
+    defer app.finalize()
+    let win = app.window(title: "windowing platform probe", width: 320, height: 200)?
+    let mut frame = win.framebuffer()?
+    frame.fill(40, 40, 48)
+    win.present(frame)?
+    // DWMWA_USE_IMMERSIVE_DARK_MODE and DWMWA_SYSTEMBACKDROP_TYPE.
+    check("frame dark", win.set_frame_theme(Some(Theme::Dark)), read_back(win, 20), 1, expect)?
+    check("frame light", win.set_frame_theme(Some(Theme::Light)), read_back(win, 20), 0, expect)?
+    let cleared = win.set_frame_theme(None)
+    if windowing::video_driver() == "x11" && read_back(win, 20).is_some() {
+        return Err(errors::new("frame desktop: the X11 theme variant stayed after clearing it"))
+    }
+    println(f"frame desktop: {outcome(cleared)}")
+    check("backdrop mica", win.set_backdrop(Backdrop::Mica), read_back(win, 38), 2, expect)?
+    check("backdrop acrylic", win.set_backdrop(Backdrop::Acrylic), read_back(win, 38), 3, expect)?
+    println(f"notifications: {windowing::notify::has_notifications()}")
+    println(f"notify: {outcome(app.notify(Notification { title: "windowing probe", body: "A notification from the platform probe.", ..Notification::default() }))}")
+    println(f"outbound drag: {windowing::drag::has_outbound_drag()}")
+    app.simulate(Event::CloseRequested { window: win.id() })?
+    loop {
+        match app.wait()? {
+            Event::CloseRequested { window } if window == win.id() => break
+            _ => ()
+        }
+    }
+    println(f"platform: {windowing::video_driver()} done")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"platform: {e}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,46 @@
+// One instance per application. The first launch prints `primary` and waits
+// for a later launch's request; a later launch hands over its arguments as
+// files to open and exits.
+
+use std::{env, errors, process}
+use windowing::instance
+use windowing::instance::{Claim, Request}
+
+const APP_ID: String = "dev.gossamer.windowing.single-instance"
+
+fn run() -> Result<(), errors::Error> {
+    let uris = env::args().map(|path| instance::file_uri(path))
+    match instance::claim(APP_ID, Request::Open { uris: uris })? {
+        Claim::Forwarded => println("forwarded")
+        Claim::Primary(listener) => {
+            defer listener.close()
+            println("primary")
+            loop {
+                if !listener.wait(-1)? {
+                    continue
+                }
+                for forwarded in listener.take_forwarded() {
+                    let request = forwarded.request
+                    println(f"request {request}")
+                    if !forwarded.activation.token.is_empty() { println(f"activation {forwarded.activation.token} startup {forwarded.activation.startup_id}") }
+                    if let Request::Open { uris } = request {
+                        for uri in uris {
+                            println(f"open {instance::uri_path(uri)}")
+                        }
+                    }
+                    if let Request::Open { .. } = request {
+                        return Ok(())
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"single-instance: {e}")
+        process::exit(1)
+    }
+}

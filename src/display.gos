@@ -1,0 +1,99 @@
+// Displays: what is connected, where each sits in the desktop, how it is
+// scaled, and the modes exclusive fullscreen can switch it to.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::support
+
+/// A connected display, stable while it stays connected.
+pub newtype DisplayId = u32
+
+/// The id SDL's display number `raw` is.
+/// A rectangle in logical desktop coordinates.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i64
+    pub y: i64
+    pub width: i64
+    pub height: i64
+}
+
+/// A video mode: pixel size, refresh rate, and the density of pixels per
+/// logical unit.
+#[derive(Debug, Default, PartialEq)]
+pub struct Mode {
+    pub width: i64
+    pub height: i64
+    pub refresh_rate: f64
+    pub pixel_density: f64
+}
+
+/// How a display is turned, where the platform reports it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Orientation {
+    Unknown
+    Landscape
+    LandscapeFlipped
+    Portrait
+    PortraitFlipped
+}
+
+/// One display as it is now.
+#[derive(Debug)]
+pub struct Display {
+    pub id: DisplayId
+    pub name: String
+    /// The display's area of the desktop.
+    pub bounds: Rect
+    /// `bounds` less task bars, docks, and menu bars.
+    pub usable: Rect
+    /// How many pixels one logical unit spans, as the user configured it.
+    pub scale: f64
+    pub mode: Mode
+    pub orientation: Orientation
+    pub primary: bool
+}
+
+/// Every connected display, the primary first.
+pub fn all() -> Result<Vec<Display>, errors::Error> {
+    support::require_main_thread("windowing::display::all")
+    let text = support::ok(windowing_desktop::display_all())?
+    json::decode::<DisplayList>(f"{{\"items\":{text}}}").map(|l| l.items).map_err(|e| errors::wrap(e, "reading the displays"))
+}
+
+/// The primary display.
+pub fn primary() -> Result<Display, errors::Error> {
+    support::require_main_thread("windowing::display::primary")
+    let text = support::ok(windowing_desktop::display_primary())?
+    json::decode::<Display>(text).map_err(|e| errors::wrap(e, "reading the display"))
+}
+
+/// The display `id` names.
+pub fn get(id: DisplayId) -> Result<Display, errors::Error> {
+    support::require_main_thread("windowing::display::get")
+    let raw: u32 = id.into()
+    let text = support::ok(windowing_desktop::display_get(raw as i64))?
+    json::decode::<Display>(text).map_err(|e| errors::wrap(e, "reading the display"))
+}
+
+/// The modes exclusive fullscreen can switch display `id` to.
+pub fn modes(id: DisplayId) -> Result<Vec<Mode>, errors::Error> {
+    support::require_main_thread("windowing::display::modes")
+    let raw: u32 = id.into()
+    let text = support::ok(windowing_desktop::display_modes(raw as i64))?
+    json::decode::<ModeList>(f"{{\"items\":{text}}}").map(|l| l.items).map_err(|e| errors::wrap(e, "reading the display modes"))
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct DisplayList {
+    items: Vec<Display>
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct ModeList {
+    items: Vec<Mode>
+}

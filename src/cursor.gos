@@ -1,0 +1,88 @@
+// The pointer's look: the system's cursors, cursors drawn by the program,
+// and whether the pointer shows at all.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::support
+
+/// A cursor the system draws in its own theme.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SystemCursor {
+    Default
+    /// The text-selection I-beam.
+    Text
+    Wait
+    Crosshair
+    /// Busy, while the program still takes input.
+    Progress
+    ResizeNwse
+    ResizeNesw
+    ResizeEw
+    ResizeNs
+    Move
+    NotAllowed
+    /// The pointing hand over a link.
+    Pointer
+    ResizeNw
+    ResizeN
+    ResizeNe
+    ResizeE
+    ResizeSe
+    ResizeS
+    ResizeSw
+    ResizeW
+}
+
+/// A cursor ready to show. It lives until `destroy`; the one showing must
+/// not be destroyed.
+/// A cursor the program created; `show` makes it the pointer's look.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Cursor {
+    handle: i64
+}
+
+impl Cursor {
+    /// Makes this the pointer's cursor.
+    pub fn show(&self) -> Result<(), errors::Error> {
+        support::require_main_thread("Cursor::show")
+        support::ok(windowing_desktop::cursor_set(self.handle))
+    }
+
+    /// Frees the cursor; it must not be shown after.
+    pub fn destroy(&self) {
+        support::require_main_thread("Cursor::destroy")
+        let _ = support::ok(windowing_desktop::cursor_destroy(self.handle))
+    }
+}
+
+/// One of the system's cursors.
+pub fn system(kind: SystemCursor) -> Result<Cursor, errors::Error> {
+    support::require_main_thread("windowing::cursor::system")
+    Ok(Cursor { handle: support::ok(windowing_desktop::cursor_system(json::encode(kind)))? })
+}
+
+/// A cursor from `width` x `height` RGBA pixels, its hot spot at (`hot_x`, `hot_y`).
+pub fn custom(rgba: Vec<u8>, width: i64, height: i64, hot_x: i64, hot_y: i64) -> Result<Cursor, errors::Error> {
+    support::require_main_thread("windowing::cursor::custom")
+    Ok(Cursor { handle: support::ok(windowing_desktop::cursor_custom(rgba, width, height, hot_x, hot_y))? })
+}
+
+/// Shows the pointer.
+pub fn show() -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::cursor::show")
+    support::ok(windowing_desktop::cursor_show())
+}
+
+/// Hides the pointer.
+pub fn hide() -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::cursor::hide")
+    support::ok(windowing_desktop::cursor_hide())
+}
+
+/// Whether the pointer shows.
+pub fn is_visible() -> bool {
+    support::require_main_thread("windowing::cursor::is_visible")
+    windowing_desktop::cursor_is_visible()
+}

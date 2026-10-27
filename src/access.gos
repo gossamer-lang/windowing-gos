@@ -1,0 +1,159 @@
+// Accessibility providers for the platforms whose screen readers read native
+// objects: UI Automation on Windows (`uia`) and NSAccessibility on macOS
+// (`axmac`). The program describes each window's semantic tree with
+// `update`, as a flat list of elements; the providers answer the screen
+// reader's queries from the latest list on the main thread, and queue what
+// it asks the program to do, which `take_requests` hands over after an
+// `Event::Wake`. On Linux the toolkit speaks AT-SPI over D-Bus itself, so
+// `has_provider` answers false there.
+//
+// Element bounds are in the window's framebuffer pixels, the unit the
+// program draws in; each provider converts them to the screen's.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::support
+use crate::window::{Window, WindowId}
+
+/// One element of a window's semantic tree.
+#[derive(Debug, PartialEq)]
+pub struct AccessElement {
+    /// Unique within the window and stable across updates; never 0.
+    pub id: u64
+    /// One of the role names `gui::Role::name` answers: "button",
+    /// "checkbox", "textfield", "listitem", "tab", ...
+    pub role: String
+    pub name: String
+    pub description: String
+    pub value: String
+    pub x: i64
+    pub y: i64
+    pub width: i64
+    pub height: i64
+    pub focusable: bool
+    pub focused: bool
+    pub disabled: bool
+    /// -1 not checkable, 0 unchecked, 1 checked, 2 mixed.
+    pub checked: i64
+    pub selected: bool
+    /// -1 not expandable, 0 collapsed, 1 expanded.
+    pub expanded: i64
+    pub pressed: bool
+    pub read_only: bool
+    pub required: bool
+    pub invalid: bool
+    pub multiline: bool
+    pub modal: bool
+    pub level: i64
+    pub pos_in_set: i64
+    pub set_size: i64
+    pub has_range: bool
+    pub range_min: f64
+    pub range_max: f64
+    pub range_now: f64
+    /// The actions the element takes: "press", "select", "increment", ...
+    pub actions: Vec<String>
+    /// "polite" or "assertive" for a live region, else empty.
+    pub live: String
+    pub children: Vec<u64>
+}
+
+impl Default for AccessElement {
+    fn default() -> AccessElement {
+        AccessElement {
+            id: 0
+            role: "unknown"
+            name: ""
+            description: ""
+            value: ""
+            x: 0
+            y: 0
+            width: 0
+            height: 0
+            focusable: false
+            focused: false
+            disabled: false
+            checked: -1
+            selected: false
+            expanded: -1
+            pressed: false
+            read_only: false
+            required: false
+            invalid: false
+            multiline: false
+            modal: false
+            level: 0
+            pos_in_set: 0
+            set_size: 0
+            has_range: false
+            range_min: 0.0
+            range_max: 0.0
+            range_now: 0.0
+            actions: #[]
+            live: ""
+            children: #[]
+        }
+    }
+}
+
+/// What a screen reader asked the program to do to an element: an action
+/// the element listed, "focus", "set-text" with `value`, or "set-value"
+/// with a number in `value`.
+#[derive(Debug, PartialEq)]
+pub struct AccessRequest {
+    pub window: WindowId
+    pub id: u64
+    pub action: String
+    pub value: String
+}
+
+/// Whether this platform has a provider here (Windows UI Automation, macOS
+/// NSAccessibility).
+pub fn has_provider() -> bool {
+    windowing_desktop::access_has_provider()
+}
+
+/// Whether a screen reader or other client is reading the program's
+/// windows, so trees are worth describing.
+pub fn listening() -> bool {
+    windowing_desktop::access_listening()
+}
+
+/// Makes `elements` the semantic tree of `window`. The first element is the
+/// window itself (its name is the window's accessible name); every other
+/// element is reached from it through `children`. Screen readers hear what
+/// changed.
+pub fn update(window: Window, elements: Vec<AccessElement>) -> Result<(), errors::Error> {
+    crate::support::require_main_thread("access::update")
+    let raw: u32 = window.id().into()
+    support::ok(windowing_desktop::access_update(raw as i64, json::encode(elements)))
+}
+
+/// Moves the screen reader's focus to element `id` of `window`, as the
+/// program's focus moved there.
+pub fn focus(window: Window, id: u64) -> Result<(), errors::Error> {
+    crate::support::require_main_thread("access::focus")
+    let raw: u32 = window.id().into()
+    support::ok(windowing_desktop::access_focus(raw as i64, id as i64))
+}
+
+/// Asks the screen reader to speak `text`, ahead of what it is saying when
+/// `assertive`.
+pub fn announce(window: Window, text: String, assertive: bool) -> Result<(), errors::Error> {
+    crate::support::require_main_thread("access::announce")
+    let raw: u32 = window.id().into()
+    support::ok(windowing_desktop::access_announce(raw as i64, text, assertive))
+}
+
+/// The requests screen readers made since the last call, oldest first.
+pub fn take_requests() -> Vec<AccessRequest> {
+    json::decode::<AccessRequestList>(f"{{\"items\":{windowing_desktop::access_take_requests()}}}").map(|l| l.items).unwrap_or(#[])
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct AccessRequestList {
+    items: Vec<AccessRequest>
+}

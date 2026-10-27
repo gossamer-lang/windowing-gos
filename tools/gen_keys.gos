@@ -1,0 +1,249 @@
+// Writes `src/keys.gos` from the vendored SDL headers:
+//
+//     gos run tools/gen_keys.gos > src/keys.gos
+//
+// Every `SDLK_*` keycode becomes a `Key` variant and every `SDL_SCANCODE_*`
+// value a `Scancode` variant, with the conversions in both directions.
+
+use std::{fs, process, strconv}
+
+const KEYCODE_HEADER: String = "vendor/SDL/include/SDL3/SDL_keycode.h"
+const SCANCODE_HEADER: String = "vendor/SDL/include/SDL3/SDL_scancode.h"
+
+// SDL runs some words together; these parts read better split.
+fn part_name(part: String) -> String {
+    match part {
+        "DBLAPOSTROPHE" => "DoubleApostrophe"
+        "DBLAMPERSAND" => "DoubleAmpersand"
+        "DBLVERTICALBAR" => "DoubleVerticalBar"
+        "VERTICALBAR" => "VerticalBar"
+        "LEFTPAREN" => "LeftParen"
+        "RIGHTPAREN" => "RightParen"
+        "LEFTBRACKET" => "LeftBracket"
+        "RIGHTBRACKET" => "RightBracket"
+        "LEFTBRACE" => "LeftBrace"
+        "RIGHTBRACE" => "RightBrace"
+        "PLUSMINUS" => "PlusMinus"
+        "CAPSLOCK" => "CapsLock"
+        "PRINTSCREEN" => "PrintScreen"
+        "SCROLLLOCK" => "ScrollLock"
+        "PAGEUP" => "PageUp"
+        "PAGEDOWN" => "PageDown"
+        "NUMLOCKCLEAR" => "NumLockClear"
+        "VOLUMEUP" => "VolumeUp"
+        "VOLUMEDOWN" => "VolumeDown"
+        "ALTERASE" => "AltErase"
+        "SYSREQ" => "SysReq"
+        "CLEARAGAIN" => "ClearAgain"
+        "CRSEL" => "CrSel"
+        "EXSEL" => "ExSel"
+        "THOUSANDSSEPARATOR" => "ThousandsSeparator"
+        "DECIMALSEPARATOR" => "DecimalSeparator"
+        "CURRENCYUNIT" => "CurrencyUnit"
+        "CURRENCYSUBUNIT" => "CurrencySubunit"
+        "LCTRL" => "LeftCtrl"
+        "LSHIFT" => "LeftShift"
+        "LALT" => "LeftAlt"
+        "LGUI" => "LeftGui"
+        "RCTRL" => "RightCtrl"
+        "RSHIFT" => "RightShift"
+        "RALT" => "RightAlt"
+        "RGUI" => "RightGui"
+        "LMETA" => "LeftMeta"
+        "RMETA" => "RightMeta"
+        "LHYPER" => "LeftHyper"
+        "RHYPER" => "RightHyper"
+        "SOFTLEFT" => "SoftLeft"
+        "SOFTRIGHT" => "SoftRight"
+        "ENDCALL" => "EndCall"
+        "MEMSTORE" => "MemStore"
+        "MEMRECALL" => "MemRecall"
+        "MEMCLEAR" => "MemClear"
+        "MEMADD" => "MemAdd"
+        "MEMSUBTRACT" => "MemSubtract"
+        "MEMMULTIPLY" => "MemMultiply"
+        "MEMDIVIDE" => "MemDivide"
+        "NONUSHASH" => "NonUsHash"
+        "NONUSBACKSLASH" => "NonUsBackslash"
+        "KBDILLUMTOGGLE" => "KbdIllumToggle"
+        "KBDILLUMDOWN" => "KbdIllumDown"
+        "KBDILLUMUP" => "KbdIllumUp"
+        "DISPLAYSWITCH" => "DisplaySwitch"
+        "NUMLOCK" => "NumLock"
+        "KPENTER" => "KpEnter"
+        _ => {
+            let lower = part.to_lowercase()
+            if lower.is_empty() {
+                return lower
+            }
+            lower.substring(0, 1).to_uppercase() + lower.substring(1, lower.byte_len())
+        }
+    }
+}
+
+// `RETURN` -> `Return`, `KP_LEFTPAREN` -> `KpLeftParen`, `0` -> `Num0`.
+fn variant_name(raw: String) -> String {
+    let mut out = ""
+    for part in raw.split("_") {
+        out += part_name(part)
+    }
+    if out.substring(0, 1).to_i64().is_some() {
+        out = "Num" + out
+    }
+    out
+}
+
+// Printable ASCII other than letters, digits, and the space.
+fn is_punctuation(code: i64) -> bool {
+    (code >= 0x21 && code <= 0x2f) || (code >= 0x3a && code <= 0x40) ||
+        (code >= 0x5b && code <= 0x60) || (code >= 0x7b && code <= 0x7e)
+}
+
+// Keycodes wider than 16 bits in the hex SDL's header spells them in.
+fn code_literal(value: i64) -> String {
+    if value > 0xffff { f"0x{value:x}" } else { f"{value}" }
+}
+
+struct Entry {
+    name: String
+    value: i64
+}
+
+fn read(path: String) -> String {
+    match fs::read_to_string(path) {
+        Ok(text) => text
+        Err(e) => {
+            eprintln(f"reading {path}: {e}")
+            process::exit(1)
+        }
+    }
+}
+
+fn keycodes() -> Vec<Entry> {
+    let mut out = #[]
+    for line in read(KEYCODE_HEADER).lines() {
+        let Some(rest) = line.strip_prefix("#define SDLK_") else { continue }
+        let words = rest.split_whitespace()
+        if words.len() < 2 {
+            continue
+        }
+        let name = words[0]
+        let literal = words[1]
+        if name == "EXTENDED_MASK" || name == "SCANCODE_MASK" || !literal.starts_with("0x") {
+            continue
+        }
+        let digits = literal.substring(2, literal.byte_len()).trim_end_matches("u")
+        let Ok(value) = strconv::parse_i64_radix(digits, 16) else { continue }
+        // A punctuation key is the character its cap prints: `Key::Char`.
+        if is_punctuation(value) {
+            continue
+        }
+        out.push(Entry { name: variant_name(name), value: value })
+    }
+    out
+}
+
+fn scancodes() -> Vec<Entry> {
+    let mut out = #[]
+    for line in read(SCANCODE_HEADER).lines() {
+        let trimmed = line.trim()
+        let Some(rest) = trimmed.strip_prefix("SDL_SCANCODE_") else { continue }
+        let Some(eq) = rest.find(" = ") else { continue }
+        let name = rest.substring(0, eq)
+        let value_text = rest.substring(eq + 3, rest.byte_len()).trim_end_matches(",")
+        let Some(value) = value_text.split_whitespace()[0].trim_end_matches(",").to_i64() else {
+            continue
+        }
+        if name == "COUNT" {
+            continue
+        }
+        out.push(Entry { name: variant_name(name), value: value })
+    }
+    out
+}
+
+fn main() {
+    let keys = keycodes()
+    let scans = scancodes()
+    println("// Generated by `gos run tools/gen_keys.gos > src/keys.gos` from SDL's")
+    println("// SDL_keycode.h and SDL_scancode.h. Regenerate rather than editing by hand.")
+    println("")
+    println("/// A key as the keyboard layout names it: what the key cap says. Letters,")
+    println("/// digits, and keys that print nothing have variants; any other key that")
+    println("/// types a character is `Char`, and one SDL cannot name is `Other`.")
+    println("#[derive(Debug, PartialEq, Eq)]")
+    println("pub enum Key {")
+    for entry in keys {
+        println(f"    {entry.name}")
+    }
+    println("    Char(char)")
+    println("    Other(u32)")
+    println("}")
+    println("")
+    println("/// A key by its physical position, whatever the layout prints on it.")
+    println("#[derive(Debug, PartialEq, Eq)]")
+    println("pub enum Scancode {")
+    for entry in scans {
+        println(f"    {entry.name}")
+    }
+    println("    Other(i32)")
+    println("}")
+    println("")
+    println("impl Key {")
+    println("    /// The key SDL's keycode `code` names.")
+    println("    pub fn from_code(code: u32) -> Key {")
+    println("        match code {")
+    let mut seen_keys: Set<i64> = #{}
+    for entry in keys {
+        if seen_keys.contains(entry.value) {
+            continue
+        }
+        seen_keys.insert(entry.value)
+        println(f"            {code_literal(entry.value)} => Key::{entry.name}")
+    }
+    println("            _ => match char::from_u32(code) {")
+    println("                Some(c) if code < 0x40000000 => Key::Char(c)")
+    println("                _ => Key::Other(code)")
+    println("            }")
+    println("        }")
+    println("    }")
+    println("")
+    println("    /// SDL's keycode for this key.")
+    println("    pub fn code(&self) -> u32 {")
+    println("        match self {")
+    for entry in keys {
+        println(f"            Key::{entry.name} => {code_literal(entry.value)}")
+    }
+    println("            Key::Char(c) => c as u32")
+    println("            Key::Other(code) => code")
+    println("        }")
+    println("    }")
+    println("}")
+    println("")
+    println("impl Scancode {")
+    println("    /// The scancode SDL's value `code` names.")
+    println("    pub fn from_code(code: i32) -> Scancode {")
+    println("        match code {")
+    let mut seen_scans: Set<i64> = #{}
+    for entry in scans {
+        if seen_scans.contains(entry.value) {
+            continue
+        }
+        seen_scans.insert(entry.value)
+        println(f"            {entry.value} => Scancode::{entry.name}")
+    }
+    println("            _ => Scancode::Other(code)")
+    println("        }")
+    println("    }")
+    println("")
+    println("    /// SDL's value for this scancode.")
+    println("    pub fn code(&self) -> i32 {")
+    println("        match self {")
+    for entry in scans {
+        println(f"            Scancode::{entry.name} => {entry.value}")
+    }
+    println("            Scancode::Other(code) => code")
+    println("        }")
+    println("    }")
+    println("}")
+}

@@ -1,0 +1,91 @@
+// Drives a real XDND drag between two windows of this process: XTest moves
+// and presses the pointer, `App::start_drag` offers text from window A, and
+// window B (an SDL drop target) receives it. Needs an X server with XTest;
+// `run.sh` starts a private one.
+use std::{errors, process}
+use std::ffi::Ptr
+use windowing
+use windowing::{DragItem, DragOperation, Event}
+
+#[link(name = "X11")]
+unsafe extern "C" {
+    type XDisplay
+    fn XOpenDisplay(name: Option<Ptr<u8>>) -> Option<Ptr<XDisplay>>
+    fn XFlush(display: Ptr<XDisplay>) -> i32
+    fn XCloseDisplay(display: Ptr<XDisplay>) -> i32
+}
+
+#[link(name = "Xtst")]
+unsafe extern "C" {
+    fn XTestFakeMotionEvent(display: Ptr<XDisplay>, screen: i32, x: i32, y: i32, delay: u64) -> i32
+    fn XTestFakeButtonEvent(display: Ptr<XDisplay>, button: u32, press: i32, delay: u64) -> i32
+}
+
+fn motion(d: Ptr<XDisplay>, x: i32, y: i32) {
+    unsafe { XTestFakeMotionEvent(d, 0, x, y, 0) }
+    let _ = unsafe { XFlush(d) }
+}
+
+fn button(d: Ptr<XDisplay>, press: bool) {
+    unsafe { XTestFakeButtonEvent(d, 1, if press { 1 } else { 0 }, 0) }
+    let _ = unsafe { XFlush(d) }
+}
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("Drag probe", driver: "x11")?
+    defer app.finalize()
+    let a = app.window(title: "A", width: 300, height: 300)?
+    a.set_position(0, 0)?
+    let b = app.window(title: "B", width: 300, height: 300)?
+    b.set_position(400, 0)?
+    a.sync()?
+    b.sync()?
+    let x = unsafe { XOpenDisplay(None) }.ok_or(errors::new("no X display"))?
+    defer unsafe { XCloseDisplay(x) }
+    let mut pressed = false
+    let mut started = false
+    let mut moves_in_b = 0
+    let mut dropped = ""
+    let mut finished = ""
+    loop {
+        match app.wait()? {
+            Event::WindowShown { window } if window == b.id() && !pressed => {
+                pressed = true
+                motion(x, 100, 100)
+                button(x, true)
+            }
+            Event::ButtonDown { window, .. } if window == a.id() => motion(x, 110, 110)
+            Event::PointerMoved { window, buttons, .. } if window == a.id() && !started && buttons.left => {
+                let id = app.start_drag(a, #[DragItem { mime: "text/plain;charset=utf-8", data: "hello drag".bytes() }], DragOperation::Copy)?
+                println(f"started drag {id}")
+                started = true
+                motion(x, 500, 100)
+            }
+            Event::DropMoved { window, .. } if window == b.id() => {
+                moves_in_b += 1
+                if moves_in_b == 1 {
+                    motion(x, 510, 110)
+                } else if moves_in_b == 2 {
+                    button(x, false)
+                }
+            }
+            Event::DroppedText { window, text, .. } if window == b.id() => dropped = text
+            Event::DragFinished { operation, .. } => {
+                finished = f"{operation}"
+                break
+            }
+            Event::QuitRequested => break
+            _ => ()
+        }
+    }
+    println(f"dropped: {dropped}")
+    println(f"finished: {finished}")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"drag probe: {e}")
+        process::exit(1)
+    }
+}

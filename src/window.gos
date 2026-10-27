@@ -1,0 +1,561 @@
+// Windows: creation, the state a program changes, text input, the pointer
+// modes a window takes, and redraw requests.
+
+use std::errors
+use std::encoding::json
+use windowing_app
+use windowing_window
+use windowing_hooks
+
+use crate::display
+use crate::display::{Display, Mode, Rect}
+use crate::support
+
+/// A window, as events name it. No open window has the id 0.
+pub newtype WindowId = u32
+
+/// What a window is for, which decides how the system decorates, stacks,
+/// and focuses it. A popup, tooltip, or modal needs a parent.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum WindowKind {
+    #[default]
+    Normal
+    /// A tool palette: no task-bar entry, stays above its parent.
+    Utility
+    /// A menu or drop-down, placed relative to its parent.
+    Popup
+    /// A tooltip, placed relative to its parent, never focused.
+    Tooltip
+    /// A dialog that blocks input to its parent while it is open.
+    Modal
+}
+
+/// The graphics API a window is created for.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum Graphics {
+    /// Draw into the framebuffer `Window::framebuffer` answers.
+    #[default]
+    Software
+    /// An OpenGL or OpenGL ES context; see `Window::gl_context`.
+    OpenGl
+    /// A Vulkan surface; see `Window::vulkan_surface`.
+    Vulkan
+    /// A Metal layer (macOS); see `Window::metal_view`.
+    Metal
+    /// The native handle only, for a graphics API bound by another package.
+    External
+}
+
+/// How a window asks for the user's attention.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Attention {
+    /// Flash once.
+    Briefly
+    /// Flash until the window gains focus.
+    UntilFocused
+    /// Stop asking.
+    Cancel
+}
+
+/// The material Windows 11 draws behind a window: in its title bar, and in
+/// its client area where a transparent window's pixels are clear.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Backdrop {
+    /// The system chooses.
+    Auto
+    /// A plain backdrop.
+    Plain
+    /// Mica, the material of long-lived main windows.
+    Mica
+    /// Acrylic, the material of transient surfaces such as popups.
+    Acrylic
+    /// Mica tinted for a window with tabs in its title bar.
+    Tabbed
+}
+
+/// What a point of a borderless window is to the system: where a custom
+/// title bar drags the window or an edge resizes it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum HitArea {
+    Normal
+    Draggable
+    ResizeTopLeft
+    ResizeTop
+    ResizeTopRight
+    ResizeRight
+    ResizeBottomRight
+    ResizeBottom
+    ResizeBottomLeft
+    ResizeLeft
+}
+
+// The position of `a` in `HitArea`, as the binding reads it.
+fn hit_code(a: HitArea) -> i64 {
+    match a {
+        HitArea::Normal => 0
+        HitArea::Draggable => 1
+        HitArea::ResizeTopLeft => 2
+        HitArea::ResizeTop => 3
+        HitArea::ResizeTopRight => 4
+        HitArea::ResizeRight => 5
+        HitArea::ResizeBottomRight => 6
+        HitArea::ResizeBottom => 7
+        HitArea::ResizeBottomLeft => 8
+        HitArea::ResizeLeft => 9
+    }
+}
+
+/// An open window. The value is a reference to it: copies name the same
+/// window, and it stays open until `close` or `App::finalize`.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Window {
+    pub (package) id: WindowId
+}
+
+impl Window {
+    /// The id events carry for this window.
+    pub fn id(&self) -> WindowId {
+        self.id
+    }
+
+    fn raw(&self) -> i64 {
+        let n: u32 = self.id.into()
+        n as i64
+    }
+
+    fn pair(&self, text: Result<String, errors::Error>) -> (i64, i64) {
+        match text {
+            Ok(t) => json::decode::<Pair>(f"{{\"v\":{t}}}").map(|p| p.v).unwrap_or((0, 0))
+            Err(_) => (0, 0)
+        }
+    }
+
+    fn flag(&self, name: String) -> bool {
+        support::require_main_thread("Window flags")
+        support::ok(windowing_window::window_flag(self.raw(), name)).unwrap_or(false)
+    }
+
+    fn act(&self, op: String, action: String) -> Result<(), errors::Error> {
+        support::require_main_thread(op)
+        support::ok(windowing_window::window_act(self.raw(), action))
+    }
+
+    /// Closes the window. Events already queued may still name its id.
+    pub fn close(&self) {
+        support::require_main_thread("Window::close")
+        let _ = support::ok(windowing_window::window_close(self.raw()))
+    }
+
+    pub fn title(&self) -> String {
+        support::require_main_thread("Window::title")
+        support::ok(windowing_window::window_title(self.raw())).unwrap_or("")
+    }
+
+    pub fn set_title(&self, title: String) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_title")
+        support::ok(windowing_window::window_set_title(self.raw(), title))
+    }
+
+    /// The size of the window's content area in logical units.
+    pub fn size(&self) -> (i64, i64) {
+        support::require_main_thread("Window::size")
+        self.pair(support::ok(windowing_window::window_size(self.raw())))
+    }
+
+    /// Resizes the content area to `width` x `height` logical units.
+    pub fn set_size(&self, width: i64, height: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_size")
+        support::ok(windowing_window::window_set_size(self.raw(), width, height))
+    }
+
+    /// The size of the window's content area in pixels, which the
+    /// framebuffer has: larger than `size` on a scaled display.
+    pub fn pixel_size(&self) -> (i64, i64) {
+        support::require_main_thread("Window::pixel_size")
+        self.pair(support::ok(windowing_window::window_pixel_size(self.raw())))
+    }
+
+    /// Pixels per logical unit, including the display's content scale.
+    pub fn scale(&self) -> f64 {
+        support::require_main_thread("Window::scale")
+        support::ok(windowing_window::window_scale(self.raw())).unwrap_or(1.0)
+    }
+
+    /// The window's position in logical desktop coordinates.
+    pub fn position(&self) -> (i64, i64) {
+        support::require_main_thread("Window::position")
+        self.pair(support::ok(windowing_window::window_position(self.raw())))
+    }
+
+    pub fn set_position(&self, x: i64, y: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_position")
+        support::ok(windowing_window::window_set_position(self.raw(), x, y))
+    }
+
+    pub fn set_min_size(&self, width: i64, height: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_min_size")
+        support::ok(windowing_window::window_set_min_size(self.raw(), width, height))
+    }
+
+    pub fn set_max_size(&self, width: i64, height: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_max_size")
+        support::ok(windowing_window::window_set_max_size(self.raw(), width, height))
+    }
+
+    pub fn set_resizable(&self, resizable: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_resizable")
+        support::ok(windowing_window::window_set_resizable(self.raw(), resizable))
+    }
+
+    pub fn set_bordered(&self, bordered: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_bordered")
+        support::ok(windowing_window::window_set_bordered(self.raw(), bordered))
+    }
+
+    /// Enters or leaves desktop fullscreen: the window covers its display at
+    /// the display's own mode.
+    pub fn set_fullscreen(&self, fullscreen: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_fullscreen")
+        support::ok(windowing_window::window_set_fullscreen(self.raw(), fullscreen))
+    }
+
+    /// Enters exclusive fullscreen in `mode`, one of `display::modes`.
+    pub fn set_fullscreen_mode(&self, mode: Mode) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_fullscreen_mode")
+        support::ok(windowing_window::window_set_fullscreen_mode(self.raw(), json::encode(mode)))
+    }
+
+    pub fn is_fullscreen(&self) -> bool {
+        self.flag("fullscreen")
+    }
+
+    pub fn is_maximized(&self) -> bool {
+        self.flag("maximized")
+    }
+
+    pub fn is_minimized(&self) -> bool {
+        self.flag("minimized")
+    }
+
+    pub fn is_visible(&self) -> bool {
+        self.flag("visible")
+    }
+
+    /// Whether the window has keyboard focus.
+    pub fn has_focus(&self) -> bool {
+        self.flag("focus")
+    }
+
+    pub fn maximize(&self) -> Result<(), errors::Error> {
+        self.act("Window::maximize", "maximize")
+    }
+
+    pub fn minimize(&self) -> Result<(), errors::Error> {
+        self.act("Window::minimize", "minimize")
+    }
+
+    /// Restores a minimized or maximized window to its normal size.
+    pub fn restore(&self) -> Result<(), errors::Error> {
+        self.act("Window::restore", "restore")
+    }
+
+    pub fn set_always_on_top(&self, on_top: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_always_on_top")
+        support::ok(windowing_window::window_set_always_on_top(self.raw(), on_top))
+    }
+
+    /// The window's opacity, 0 transparent to 1 opaque.
+    pub fn opacity(&self) -> f64 {
+        support::require_main_thread("Window::opacity")
+        support::ok(windowing_window::window_opacity(self.raw())).unwrap_or(1.0)
+    }
+
+    pub fn set_opacity(&self, opacity: f64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_opacity")
+        support::ok(windowing_window::window_set_opacity(self.raw(), opacity))
+    }
+
+    pub fn show(&self) -> Result<(), errors::Error> {
+        self.act("Window::show", "show")
+    }
+
+    pub fn hide(&self) -> Result<(), errors::Error> {
+        self.act("Window::hide", "hide")
+    }
+
+    /// Raises the window and asks for input focus. The window system may
+    /// only flash it, to keep focus from being stolen.
+    /// Applies the context returned by `Listener.take_forwarded`, including
+    /// the launcher's X11 startup identity or Wayland activation token.
+    pub fn focus_with_context(&self, activation: crate::instance::Activation) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::focus_with_context")
+        support::ok(windowing_window::window_focus_with_context(self.raw(), json::encode(activation)))
+    }
+
+    /// Obtains a single-use Wayland token for forwarding, with a two-second
+    /// deadline. Other drivers answer an empty token.
+    pub fn activation_token(&self) -> Result<String, errors::Error> {
+        support::require_main_thread("Window::activation_token")
+        support::ok(windowing_window::window_activation_token(self.raw()))
+    }
+
+    /// Requests focus using the launcher's Wayland token. An empty token uses
+    /// ordinary platform focus; compositor policy can still refuse activation.
+    pub fn focus_with_activation(&self, token: String) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::focus_with_activation")
+        support::ok(windowing_window::window_focus_with_activation(self.raw(), token))
+    }
+
+    pub fn focus(&self) -> Result<(), errors::Error> {
+        self.act("Window::focus", "focus")
+    }
+
+    pub fn request_attention(&self, how: Attention) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::request_attention")
+        support::ok(windowing_window::window_request_attention(self.raw(), json::encode(how)))
+    }
+
+    /// Makes `parent` the window this one belongs to, or none.
+    pub fn set_parent(&self, parent: Option<Window>) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_parent")
+        let raw = match parent {
+            Some(p) => p.raw()
+            None => 0
+        }
+        support::ok(windowing_window::window_set_parent(self.raw(), raw))
+    }
+
+    /// The display the window is on.
+    pub fn display(&self) -> Result<Display, errors::Error> {
+        support::require_main_thread("Window::display")
+        let text = support::ok(windowing_window::window_display(self.raw()))?
+        json::decode::<Display>(text).map_err(|e| errors::wrap(e, "reading the display"))
+    }
+
+    /// Queues `Event::RedrawRequested` for this window. Safe from any
+    /// goroutine.
+    pub fn request_redraw(&self) -> Result<(), errors::Error> {
+        support::ok(windowing_window::window_request_redraw(self.raw()))
+    }
+
+    /// Starts text input: `Text` and `Composing` events arrive, and on
+    /// touch platforms the on-screen keyboard shows.
+    pub fn start_text_input(&self) -> Result<(), errors::Error> {
+        self.act("Window::start_text_input", "start-text-input")
+    }
+
+    /// Starts text input, describing the text to the input method.
+    pub fn start_text_input_with(&self, options: TextInputOptions) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::start_text_input_with")
+        support::ok(windowing_window::window_start_text_input_with(self.raw(), json::encode(options)))
+    }
+
+    pub fn stop_text_input(&self) -> Result<(), errors::Error> {
+        self.act("Window::stop_text_input", "stop-text-input")
+    }
+
+    pub fn is_text_input_active(&self) -> bool {
+        self.flag("text-input")
+    }
+
+    /// Where the text being edited is, so the input method places its
+    /// candidate window beside it; `cursor` is the caret's x offset in `area`.
+    pub fn set_text_input_area(&self, area: Rect, cursor: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_text_input_area")
+        support::ok(windowing_window::window_set_text_input_area(self.raw(), area.x, area.y, area.width, area.height, cursor))
+    }
+
+    /// Relative mode hides the pointer, keeps it in the window, and reports
+    /// unbounded motion in `PointerMoved`'s deltas: for camera controls.
+    pub fn set_relative_pointer(&self, enabled: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_relative_pointer")
+        support::ok(windowing_window::window_set_relative_pointer(self.raw(), enabled))
+    }
+
+    pub fn is_relative_pointer(&self) -> bool {
+        self.flag("relative-pointer")
+    }
+
+    /// Keeps the pointer inside the window while it has focus.
+    pub fn set_pointer_confined(&self, confined: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_pointer_confined")
+        support::ok(windowing_window::window_set_pointer_confined(self.raw(), confined))
+    }
+
+    /// Moves the pointer to `x`, `y` in the window's logical coordinates.
+    pub fn warp_pointer(&self, x: f64, y: f64) {
+        support::require_main_thread("Window::warp_pointer")
+        let _ = support::ok(windowing_window::window_warp_pointer(self.raw(), x, y))
+    }
+
+    /// Makes `area` decide what each point of the window is to the system,
+    /// so a borderless window with a drawn title bar drags and resizes like
+    /// a decorated one. The function runs on the main thread while events
+    /// are read; `None` restores the default.
+    pub fn set_hit_test(&self, area: Option<Fn(f64, f64) -> HitArea>) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_hit_test")
+        match area {
+            Some(f) => support::ok(windowing_hooks::set_hit_test(self.raw(), |x: f64, y: f64| hit_code(f(x, y))))
+            None => support::ok(windowing_hooks::clear_hit_test(self.raw()))
+        }
+    }
+
+    /// The window's icon, from `width` x `height` RGBA pixels, 4 bytes each.
+    pub fn set_icon(&self, rgba: Vec<u8>, width: i64, height: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_icon")
+        support::ok(windowing_window::window_set_icon(self.raw(), rgba, width, height))
+    }
+
+    /// The material Windows 11 draws behind the window. Elsewhere, and
+    /// before Windows 11 22H2, this answers an error.
+    pub fn set_backdrop(&self, backdrop: Backdrop) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_backdrop")
+        support::ok(windowing_window::window_set_backdrop(self.raw(), json::encode(backdrop)))
+    }
+
+    /// Waits until the platform has applied the window's pending position,
+    /// size, and state changes. Several window systems apply them later.
+    pub fn sync(&self) -> Result<(), errors::Error> {
+        self.act("Window::sync", "sync")
+    }
+
+    /// Opts this window into native macOS tabs with a stable group identifier.
+    pub fn set_native_tabbing(&self, group: String, enabled: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_native_tabbing")
+        support::ok(windowing_window::window_set_native_tabbing(self.raw(), group, enabled))
+    }
+
+    /// Groups `other` with this window using the platform's native tab strip.
+    pub fn merge_native_tab(&self, other: Window) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::merge_native_tab")
+        support::ok(windowing_window::window_merge_native_tab(self.raw(), other.raw()))
+    }
+
+    /// Detaches this native tab into its own window without destroying its content.
+    pub fn detach_native_tab(&self) -> Result<(), errors::Error> {
+        self.act("Window::detach_native_tab", "detach-native-tab")
+    }
+}
+
+// A pair the core encodes as `[a, b]`.
+struct Pair {
+    v: (i64, i64)
+}
+
+/// Everything a window can be created with. `App::window` covers the
+/// common case; `App::window_with` takes these, written as
+/// `WindowOptions { title: "Tools", kind: WindowKind::Utility, ..WindowOptions::default() }`.
+#[derive(Debug)]
+pub struct WindowOptions {
+    pub title: String
+    /// The content area's logical size.
+    pub width: i64
+    pub height: i64
+    /// The window's position in logical desktop coordinates, or relative to
+    /// `parent` for a popup or tooltip; `None` lets the system place it.
+    pub x: Option<i64>
+    pub y: Option<i64>
+    pub resizable: bool
+    pub borderless: bool
+    /// A content area with an alpha channel the desktop composites.
+    pub transparent: bool
+    pub hidden: bool
+    pub maximized: bool
+    pub fullscreen: bool
+    pub always_on_top: bool
+    /// Pixels at the display's full density (Retina, scaled Wayland) rather
+    /// than one per logical unit.
+    pub high_density: bool
+    pub focusable: bool
+    pub graphics: Graphics
+    pub kind: WindowKind
+    /// The window this one belongs to: required for popups, tooltips, and
+    /// modals.
+    pub parent: Option<Window>
+}
+
+impl Default for WindowOptions {
+    fn default() -> WindowOptions {
+        WindowOptions {
+            title: ""
+            width: 800
+            height: 600
+            x: None
+            y: None
+            resizable: false
+            borderless: false
+            transparent: false
+            hidden: false
+            maximized: false
+            fullscreen: false
+            always_on_top: false
+            high_density: true
+            focusable: true
+            graphics: Graphics::Software
+            kind: WindowKind::Normal
+            parent: None
+        }
+    }
+}
+
+/// What edited text is for, so an input method can pick a keyboard, hide the
+/// text, or leave composition off.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum TextPurpose {
+    #[default]
+    Text
+    Name
+    Email
+    Username
+    Password
+    VisiblePassword
+    Number
+    Pin
+    VisiblePin
+}
+
+/// How an input method capitalizes what is typed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Capitalization {
+    Nothing
+    Sentences
+    Words
+    Letters
+}
+
+/// How `Window::start_text_input_with` describes the text to the input
+/// method. `capitalization: None` takes the platform's choice for the purpose
+/// (sentences for text, words for a name, nothing for an address or a
+/// password).
+#[derive(Debug, PartialEq)]
+pub struct TextInputOptions {
+    pub purpose: TextPurpose
+    pub capitalization: Option<Capitalization>
+    pub autocorrect: bool
+    pub multiline: bool
+}
+
+impl Default for TextInputOptions {
+    fn default() -> TextInputOptions {
+        TextInputOptions { purpose: TextPurpose::Text, capitalization: None, autocorrect: true, multiline: true }
+    }
+}
+
+/// What the platform's input method integration supports.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TextInputCapabilities {
+    /// `set_text_input_area` places the candidate window at the caret.
+    pub cursor_area: bool
+    /// The input method can read the text around the caret to refine its
+    /// suggestions. SDL 3.4 has no surrounding-text API, so this is false on
+    /// every platform.
+    pub surrounding_text: bool
+    /// `start_text_input_with` passes the text's purpose and hints on.
+    pub purpose_hints: bool
+}
+
+/// What text input supports here; a widget offers the features this reports.
+pub fn text_input_capabilities() -> TextInputCapabilities {
+    json::decode::<TextInputCapabilities>(windowing_app::text_input_capabilities())
+        .unwrap_or(TextInputCapabilities { cursor_area: true, surrounding_text: false, purpose_hints: true })
+}

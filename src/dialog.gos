@@ -1,0 +1,118 @@
+// The system's file and folder dialogs, and message boxes. A file dialog
+// does not block: it answers a `DialogId` at once, and the choice arrives
+// later as `Event::DialogClosed` while the loop keeps running.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::App
+use crate::support
+use crate::window::Window
+
+/// A dialog the application opened, as `Event::DialogClosed` names it.
+pub newtype DialogId = u64
+
+/// A file-type filter: a label, and the extensions it admits separated by
+/// `;` (`"png;jpg"`), or `*` for every file.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Filter {
+    pub name: String
+    pub pattern: String
+}
+
+/// How a dialog ended.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DialogChoice {
+    /// The user chose `paths`; `filter` is the index of the filter in use,
+    /// where the platform reports it.
+    Chosen { paths: Vec<String>, filter: Option<i64> }
+    Cancelled
+    /// The dialog could not be shown or failed.
+    Failed { reason: String }
+}
+
+/// The kind of message a message box shows, which picks its icon.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum MessageKind {
+    #[default]
+    Info
+    Warning
+    Error
+}
+
+/// What a file or folder dialog shows. `FileDialog::default()` opens with
+/// the platform's defaults.
+#[derive(Debug, Default)]
+pub struct FileDialog {
+    pub title: String
+    /// The folder to start in, or for a save dialog a file to propose.
+    pub location: String
+    pub filters: Vec<Filter>
+    /// Whether several files or folders may be chosen.
+    pub many: bool
+    /// The window the dialog belongs to, which it stays above.
+    pub parent: Option<Window>
+}
+
+impl App {
+    /// Stops delivery and queues Cancelled. SDL cannot portably dismiss the chooser.
+    pub fn cancel_dialog(&self, id: DialogId) -> Result<(), errors::Error> {
+        let raw: u64 = id.into()
+        support::ok(windowing_desktop::dialog_cancel(raw as i64))
+    }
+
+    /// Opens the system's file-open dialog; the choice arrives as
+    /// `Event::DialogClosed` with the answered id.
+    pub fn open_file_dialog(&self, options: FileDialog) -> Result<DialogId, errors::Error> {
+        show("open", options)
+    }
+
+    /// Opens the system's save dialog.
+    pub fn save_file_dialog(&self, options: FileDialog) -> Result<DialogId, errors::Error> {
+        show("save", options)
+    }
+
+    /// Opens the system's folder chooser; `filters` do not apply.
+    pub fn open_folder_dialog(&self, options: FileDialog) -> Result<DialogId, errors::Error> {
+        show("folder", options)
+    }
+}
+
+fn show(kind: String, options: FileDialog) -> Result<DialogId, errors::Error> {
+    support::require_main_thread("App::*_dialog")
+    let id = support::ok(windowing_desktop::dialog_file(kind, json::encode(options)))?
+    Ok((id as u64).into())
+}
+
+/// Shows a message with an OK button and waits until it is dismissed. Works
+/// before `init` too, to report a failure to start.
+pub fn message_box(title: String, message: String, kind: MessageKind) -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::dialog::message_box")
+    support::ok(windowing_desktop::dialog_message_box(title, message, json::encode(kind)))
+}
+
+/// A message with buttons to choose from, for `ask`.
+#[derive(Debug, Default)]
+pub struct Question {
+    pub title: String
+    pub message: String
+    pub buttons: Vec<String>
+    pub kind: MessageKind
+    pub parent: Option<Window>
+    /// The button Return picks.
+    pub default_button: Option<i64>
+    /// The button Escape picks.
+    pub cancel_button: Option<i64>
+}
+
+/// Shows `question` and waits for a button: answers its index, or `None`
+/// when the box was closed without one.
+pub fn ask(question: Question) -> Result<Option<i64>, errors::Error> {
+    support::require_main_thread("windowing::dialog::ask")
+    if question.buttons.is_empty() {
+        return Err(errors::new("a question needs at least one button"))
+    }
+    let chosen = support::ok(windowing_desktop::dialog_ask(json::encode(question)))?
+    if chosen < 0 { Ok(None) } else { Ok(Some(chosen)) }
+}

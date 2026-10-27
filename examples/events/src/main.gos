@@ -1,0 +1,37 @@
+// Prints every event a window receives, with text input on: a way to see
+// what the platform sends for keys, input methods, touchpads, pens, and
+// drag and drop. Closing the window quits.
+
+use std::{errors, process}
+use windowing
+use windowing::{Event, Rect}
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("Events", app_id: "dev.gossamer.windowing.events")?
+    defer app.finalize()
+    let win = app.window(title: "Events: type, click, scroll, drop files", width: 640, height: 400, resizable: true)?
+    win.start_text_input()?
+    win.set_text_input_area(Rect { x: 20, y: 20, width: 600, height: 24 }, 0)?
+    println(f"driver {windowing::video_driver()}, SDL {windowing::sdl_version()}")
+    loop {
+        let e = app.wait()?
+        println(f"{e:?}")
+        match e {
+            Event::CloseRequested { .. } | Event::QuitRequested => break
+            Event::RedrawRequested { .. } => {
+                let mut frame = win.framebuffer()?
+                frame.fill(24, 26, 32)
+                win.present(frame)?
+            }
+            _ => ()
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"events: {e}")
+        process::exit(1)
+    }
+}

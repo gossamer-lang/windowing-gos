@@ -1,0 +1,94 @@
+// The clipboard: text, data under MIME types, and the primary selection
+// X11 and Wayland keep beside it (what middle-click pastes).
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::support
+
+/// The clipboard's text.
+pub fn text() -> Result<String, errors::Error> {
+    support::require_main_thread("windowing::clipboard::text")
+    support::ok(windowing_desktop::clipboard_text())
+}
+
+/// Puts `text` on the clipboard.
+pub fn set_text(text: String) -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::clipboard::set_text")
+    support::ok(windowing_desktop::clipboard_set_text(text))
+}
+
+/// Whether the clipboard holds text.
+pub fn has_text() -> bool {
+    support::require_main_thread("windowing::clipboard::has_text")
+    windowing_desktop::clipboard_has_text()
+}
+
+/// The primary selection's text (X11 and Wayland).
+pub fn primary_text() -> Result<String, errors::Error> {
+    support::require_main_thread("windowing::clipboard::primary_text")
+    support::ok(windowing_desktop::clipboard_primary_text())
+}
+
+/// Makes `text` the primary selection.
+pub fn set_primary_text(text: String) -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::clipboard::set_primary_text")
+    support::ok(windowing_desktop::clipboard_set_primary_text(text))
+}
+
+/// Whether the primary selection holds text.
+pub fn has_primary_text() -> bool {
+    support::require_main_thread("windowing::clipboard::has_primary_text")
+    windowing_desktop::clipboard_has_primary_text()
+}
+
+/// The MIME types the clipboard holds now.
+pub fn mime_types() -> Result<Vec<String>, errors::Error> {
+    support::require_main_thread("windowing::clipboard::mime_types")
+    let text = support::ok(windowing_desktop::clipboard_mime_types())?
+    json::decode::<StringList>(f"{{\"items\":{text}}}").map(|l| l.items).map_err(|e| errors::wrap(e, "reading the clipboard types"))
+}
+
+/// Whether the clipboard holds data under `mime_type`.
+pub fn has_data(mime_type: String) -> bool {
+    support::require_main_thread("windowing::clipboard::has_data")
+    windowing_desktop::clipboard_has_data(mime_type)
+}
+
+/// The clipboard's bytes under `mime_type`, `None` when it holds none.
+pub fn data(mime_type: String) -> Result<Option<Vec<u8>>, errors::Error> {
+    support::require_main_thread("windowing::clipboard::data")
+    if !windowing_desktop::clipboard_has_data(mime_type) {
+        return Ok(None)
+    }
+    let bytes = support::ok(windowing_desktop::clipboard_data(mime_type))?
+    Ok(Some(bytes))
+}
+
+/// Offers `items` (MIME type, bytes) on the clipboard; other applications
+/// take whichever type they understand.
+pub fn set_data(items: Vec<(String, Vec<u8>)>) -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::clipboard::set_data")
+    let mut types: Vec<String> = #[]
+    let mut lengths: Vec<i64> = #[]
+    let mut joined: Vec<u8> = #[]
+    for (kind, bytes) in items {
+        types.push(kind)
+        lengths.push(bytes.len())
+        joined.extend(bytes)
+    }
+    support::ok(windowing_desktop::clipboard_set_data(types, joined, lengths))
+}
+
+/// Empties the clipboard.
+pub fn clear() -> Result<(), errors::Error> {
+    support::require_main_thread("windowing::clipboard::clear")
+    support::ok(windowing_desktop::clipboard_clear())
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct StringList {
+    items: Vec<String>
+}

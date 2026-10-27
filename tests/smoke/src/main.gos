@@ -1,0 +1,46 @@
+// The real-driver smoke: on whatever video driver the platform has, open a
+// window, present a frame, read it back, then close the window through the
+// event queue the way a user would, and exit 0.
+
+use std::{errors, process}
+use windowing
+use windowing::Event
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("Smoke", app_id: "dev.gossamer.windowing.smoke")?
+    defer app.finalize()
+    // The application's icon reaches a window opened after it and one open
+    // when it changes; a malformed image is refused.
+    let icon = #[200u8; 16 * 16 * 4]
+    app.set_icon(icon, 16, 16)?
+    let win = app.window(title: "windowing smoke", width: 320, height: 200)?
+    app.set_icon(icon, 16, 16)?
+    if app.set_icon(#[0u8; 3], 16, 16).is_ok() {
+        return Err(errors::new("an icon of 3 bytes for 16x16 pixels was accepted"))
+    }
+    let mut frame = win.framebuffer()?
+    frame.fill(200, 40, 10)
+    win.present(frame)?
+    let shown = win.capture()?
+    let ro, go, bo = shown.format.rgb_offsets()
+    let pixel = (shown.pixels[ro], shown.pixels[go], shown.pixels[bo])
+    if pixel != (200u8, 40u8, 10u8) {
+        return Err(errors::new(f"the presented frame reads back as {pixel}"))
+    }
+    app.simulate(Event::CloseRequested { window: win.id() })?
+    loop {
+        match app.wait()? {
+            Event::CloseRequested { window } if window == win.id() => break
+            _ => ()
+        }
+    }
+    println(f"smoke: {windowing::video_driver()} presented and closed")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"smoke: {e}")
+        process::exit(1)
+    }
+}

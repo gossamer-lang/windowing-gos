@@ -1,0 +1,99 @@
+// The resource measurements `measure.sh` drives (package docs, section
+// "Resource use"):
+//
+//   windowing-measure idle software   one window, a presented frame, then idle
+//   windowing-measure idle gl         the same with a GL context
+//   windowing-measure throughput N    N injected key events, decoded and drained
+
+use std::{env, errors, process, time}
+use windowing
+use windowing::{Event, Key, Mods, Scancode}
+
+// SDL's queue holds 65535 events; each batch stays well under it.
+const BATCH: i64 = 1000
+
+fn idle(mode: String) -> Result<(), errors::Error> {
+    let app = windowing::init("Measure")?
+    defer app.finalize()
+    let graphics = if mode == "gl" { windowing::Graphics::OpenGl } else { windowing::Graphics::Software }
+    let win = app.window_with(windowing::WindowOptions {
+        title: "measure"
+        width: 640
+        height: 480
+        graphics: graphics
+        ..windowing::WindowOptions::default()
+    })?
+    if mode == "gl" {
+        let gl = win.gl_context(windowing::GlOptions::default())?
+        defer gl.destroy()
+        gl.swap()?
+        wait_for_quit(app)
+    } else {
+        let mut frame = win.framebuffer()?
+        frame.fill(30, 30, 30)
+        win.present(frame)?
+        wait_for_quit(app)
+    }
+}
+
+fn wait_for_quit(app: windowing::App) -> Result<(), errors::Error> {
+    println("ready")
+    loop {
+        if let Event::CloseRequested { .. } | Event::QuitRequested = app.wait()? {
+            return Ok(())
+        }
+    }
+}
+
+fn throughput(count: i64) -> Result<(), errors::Error> {
+    let app = windowing::init("Measure")?
+    defer app.finalize()
+    let win = app.window(title: "measure", width: 64, height: 64)?
+    let id = win.id()
+    let mut drained = 0
+    let mut checksum = 0
+    let start = time::Instant::now()
+    while drained < count {
+        let batch = BATCH.min(count - drained)
+        for i in 0..batch {
+            app.simulate(Event::KeyDown {
+                window: id
+                key: Key::A
+                scancode: Scancode::A
+                mods: Mods::default()
+                repeat: i % 2 == 0
+            })?
+        }
+        loop {
+            match app.poll() {
+                Some(Event::KeyDown { repeat, .. }) => {
+                    drained += 1
+                    if repeat {
+                        checksum += 1
+                    }
+                }
+                Some(_) => ()
+                None => break
+            }
+        }
+    }
+    let elapsed = start.elapsed().as_nanos()
+    println(f"events {drained} repeats {checksum} ns/event {elapsed / drained}")
+    Ok(())
+}
+
+fn main() {
+    let args = env::args()
+    let result = match (args.get(0), args.get(1)) {
+        (Some("idle"), Some(mode)) => idle(mode)
+        (Some("throughput"), Some(n)) => match n.to_i64() {
+            Some(count) => throughput(count)
+            None => Err(errors::new(f"not a count: {n}"))
+        }
+        _ => Err(errors::new("usage: windowing-measure idle software|gl | throughput N"))
+    }
+    if let Err(e) = result {
+        eprintln(f"measure: {e}")
+        process::exit(1)
+    }
+}

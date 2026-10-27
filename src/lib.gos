@@ -1,0 +1,327 @@
+// windowing: windows and input for Gossamer programs.
+//
+// Gets a program from nothing to a window it can render into, and stops
+// there: windows, displays, keyboard and text input, pointer, touch, and
+// pen, the clipboard, drag and drop, cursors, file dialogs and message
+// boxes, and the surfaces a renderer draws to (a software framebuffer, and
+// native handles plus helpers for OpenGL, Vulkan, and Metal). It draws
+// nothing itself. SDL 3 does the platform work underneath, in the Rust core
+// `gos-windowing`; nothing of it shows in this API.
+//
+//     use std::errors
+//     use windowing
+//     use windowing::{Event, Key}
+//
+//     fn run() -> Result<(), errors::Error> {
+//         let app = windowing::init("Hello", app_id: "dev.example.hello")?
+//         defer app.finalize()
+//         let win = app.window(title: "Hello", width: 900, height: 600, resizable: true)?
+//         loop {
+//             match app.wait()? {
+//                 Event::CloseRequested { .. } => break,
+//                 Event::KeyDown { key: Key::F, .. } => win.set_fullscreen(!win.is_fullscreen())?,
+//                 Event::RedrawRequested { .. } => {
+//                     let mut frame = win.framebuffer()?
+//                     frame.fill(30, 30, 40)
+//                     win.present(frame)?
+//                 }
+//                 _ => {}
+//             }
+//         }
+//         Ok(())
+//     }
+//
+// Every call that touches a window runs on the main thread; goroutines
+// reach the loop through a `Waker` and a channel.
+
+use std::{errors, ffi}
+use std::encoding::json
+use windowing_app
+use windowing_hooks
+
+use crate::support
+use crate::{access, cursor, dialog, display, drag, event, instance, keys, menu, notify, support, surface, system, tray, waker, window}
+
+pub type Capabilities = capabilities::Capabilities
+pub type Capability = capabilities::Capability
+pub type Support = capabilities::Support
+pub fn capabilities() -> Capabilities { capabilities::capabilities() }
+
+pub type Event = event::Event
+pub type Key = keys::Key
+pub type Scancode = keys::Scancode
+pub type Mods = event::Mods
+pub type MouseButton = event::MouseButton
+pub type Buttons = event::Buttons
+pub type PointerSource = event::PointerSource
+pub type PenState = event::PenState
+pub type PenAxis = event::PenAxis
+pub type Window = window::Window
+pub type WindowOptions = window::WindowOptions
+pub type WindowId = window::WindowId
+pub type WindowKind = window::WindowKind
+pub type Graphics = window::Graphics
+pub type Attention = window::Attention
+pub type Backdrop = window::Backdrop
+pub type HitArea = window::HitArea
+pub type TextPurpose = window::TextPurpose
+pub type Capitalization = window::Capitalization
+pub type TextInputOptions = window::TextInputOptions
+pub type TextInputCapabilities = window::TextInputCapabilities
+pub type Display = display::Display
+pub type DisplayId = display::DisplayId
+pub type Mode = display::Mode
+pub type Rect = display::Rect
+pub type Orientation = display::Orientation
+pub type Frame = surface::Frame
+pub type PixelFormat = surface::PixelFormat
+pub type RawHandle = surface::RawHandle
+pub type GlContext = surface::GlContext
+pub type GlProfile = surface::GlProfile
+pub type GlOptions = surface::GlOptions
+pub type MetalView = surface::MetalView
+pub type Waker = waker::Waker
+pub type Theme = system::Theme
+pub type Locale = system::Locale
+pub type DialogId = dialog::DialogId
+pub type DialogChoice = dialog::DialogChoice
+pub type Filter = dialog::Filter
+pub type FileDialog = dialog::FileDialog
+pub type Question = dialog::Question
+pub type MessageKind = dialog::MessageKind
+pub type Cursor = cursor::Cursor
+pub type SystemCursor = cursor::SystemCursor
+pub type Menu = menu::Menu
+pub type MenuEntry = menu::MenuEntry
+pub type MenuSource = menu::MenuSource
+pub type Shortcut = menu::Shortcut
+pub type TrayId = menu::TrayId
+pub type Tray = tray::Tray
+pub type TrayIcon = tray::TrayIcon
+pub type Notification = notify::Notification
+pub type Urgency = notify::Urgency
+pub type DragItem = drag::DragItem
+pub type DragOperation = drag::DragOperation
+pub type DragId = drag::DragId
+pub type Claim = instance::Claim
+pub type InstanceRequest = instance::Request
+
+/// The library's version.
+pub const VERSION: String = "0.1.0"
+
+/// The running windowing session. There is one at a time; `finalize` ends
+/// it and closes every window. Copies refer to the same session.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct App {}
+
+/// Starts windowing on the main thread. `name` is the application's name as
+/// the desktop shows it; `app_id` its reverse-DNS identity (the Wayland app
+/// id and the X11 class, which match the desktop entry); `driver` picks a
+/// video driver by name (`"x11"`, `"wayland"`, `"offscreen"`), the
+/// platform's best by default, and `SDL_VIDEO_DRIVER` overrides it.
+pub fn init(
+    name: String
+    app_id: String = ""
+    version: String = ""
+    driver: String = ""
+) -> Result<App, errors::Error> {
+    support::require_main_thread("windowing::init")
+    support::ok(windowing_app::app_init(name, app_id, version, driver))?
+    Ok(App {})
+}
+
+impl App {
+    /// Ends the session: closes every window and releases the platform.
+    pub fn finalize(&self) {
+        support::require_main_thread("App::finalize")
+        windowing_app::app_finalize()
+    }
+
+    /// Opens a window: a top-level window the program draws into through
+    /// `framebuffer`, sized in logical units. `window_with` reaches every
+    /// other option.
+    pub fn window(
+        &self
+        title: String = ""
+        width: i64 = 800
+        height: i64 = 600
+        resizable: bool = false
+        borderless: bool = false
+        transparent: bool = false
+        hidden: bool = false
+        maximized: bool = false
+        fullscreen: bool = false
+        always_on_top: bool = false
+    ) -> Result<window::Window, errors::Error> {
+        self.window_with(window::WindowOptions {
+            title: title
+            width: width
+            height: height
+            resizable: resizable
+            borderless: borderless
+            transparent: transparent
+            hidden: hidden
+            maximized: maximized
+            fullscreen: fullscreen
+            always_on_top: always_on_top
+            ..window::WindowOptions::default()
+        })
+    }
+
+    /// Makes `width` x `height` RGBA pixels, 4 bytes each, the application's
+    /// icon: every open window takes it, and so does each window opened
+    /// after, which on macOS is the Dock's icon. Where the window system shows
+    /// no icon per window - a Wayland compositor without the toplevel icon
+    /// protocol - the shell shows the icon of the desktop entry `app_id`
+    /// names, so the icon belongs in that entry as well.
+    pub fn set_icon(&self, rgba: Vec<u8>, width: i64, height: i64) -> Result<(), errors::Error> {
+        support::require_main_thread("App::set_icon")
+        support::ok(windowing_app::app_set_icon(rgba, width, height))
+    }
+
+    /// Opens the window `options` describe: a GPU surface, a popup, a tool
+    /// window, a modal, a placed window.
+    pub fn window_with(&self, options: window::WindowOptions) -> Result<window::Window, errors::Error> {
+        support::require_main_thread("App::window_with")
+        let id = support::ok(windowing_app::app_window(json::encode(options)))?
+        Ok(window::Window { id: (id as u32).into() })
+    }
+
+    /// The open window `id` names.
+    pub fn window_by_id(&self, id: window::WindowId) -> Option<window::Window> {
+        support::require_main_thread("App::window_by_id")
+        let raw: u32 = id.into()
+        if windowing_app::app_window_exists(raw as i64) { Some(window::Window { id: id }) } else { None }
+    }
+
+    /// Waits for the next event, without a timeout. The wait sits in the
+    /// platform's own wait, so an idle loop takes no CPU.
+    pub fn wait(&self) -> Result<event::Event, errors::Error> {
+        support::require_main_thread("App::wait")
+        support::event(support::ok(windowing_hooks::wait())?)
+    }
+
+    /// Waits up to `ms` milliseconds for the next event: `None` when none
+    /// came. For a loop that also animates on a clock.
+    pub fn wait_timeout(&self, ms: i64) -> Result<Option<event::Event>, errors::Error> {
+        support::require_main_thread("App::wait_timeout")
+        let text = support::ok(windowing_hooks::wait_timeout(ms))?
+        if text.is_empty() { Ok(None) } else { Ok(Some(support::event(text)?)) }
+    }
+
+    /// The next event of the batch the platform has delivered, without
+    /// waiting; `None` ends the batch, so `while let Some(e) = app.poll()`
+    /// stops even while events keep arriving, which the next batch holds.
+    pub fn poll(&self) -> Option<event::Event> {
+        support::require_main_thread("App::poll")
+        let text = windowing_hooks::poll()
+        if text.is_empty() { None } else { support::event(text).ok() }
+    }
+
+    /// A waker goroutines may hold to wake `wait`.
+    pub fn waker(&self) -> waker::Waker {
+        waker::Waker {}
+    }
+
+    /// Calls `redraw` with the window being resized while the user drags its
+    /// border, on Windows and macOS, where the system runs a loop of its own
+    /// until the drag ends and `wait` does not return meanwhile.
+    pub fn on_live_resize(&mut self, redraw: Fn(window::Window)) -> Result<(), errors::Error> {
+        support::require_main_thread("App::on_live_resize")
+        support::ok(windowing_hooks::on_live_resize(|id: i64| redraw(window::Window { id: (id as u32).into() })))
+    }
+
+    /// Removes the live-resize hook.
+    pub fn clear_live_resize(&mut self) -> Result<(), errors::Error> {
+        support::require_main_thread("App::clear_live_resize")
+        support::ok(windowing_hooks::clear_live_resize())
+    }
+
+    /// The modifier keys held now.
+    pub fn mods(&self) -> event::Mods {
+        support::require_main_thread("App::mods")
+        let text = support::ok(windowing_app::app_mods()).unwrap_or("")
+        json::decode::<event::Mods>(text).unwrap_or(event::Mods::default())
+    }
+
+    /// Whether the key at `scancode` is held now.
+    pub fn is_key_down(&self, scancode: keys::Scancode) -> bool {
+        support::require_main_thread("App::is_key_down")
+        support::ok(windowing_app::app_is_key_down(scancode.code() as i64)).unwrap_or(false)
+    }
+
+    /// The key the current layout puts at `scancode`.
+    pub fn key_at(&self, scancode: keys::Scancode) -> keys::Key {
+        support::require_main_thread("App::key_at")
+        keys::Key::from_code(support::ok(windowing_app::app_key_at(scancode.code() as i64)).unwrap_or(0) as u32)
+    }
+
+    /// A key's name for showing to the user (`"Return"`, `"A"`, `"Page Up"`).
+    pub fn key_name(&self, key: keys::Key) -> String {
+        support::require_main_thread("App::key_name")
+        support::ok(windowing_app::app_key_name(key.code() as i64)).unwrap_or("")
+    }
+
+    /// The pointer's position over the focused window and the buttons held.
+    pub fn pointer(&self) -> (f64, f64, event::Buttons) {
+        support::require_main_thread("App::pointer")
+        let text = support::ok(windowing_app::app_pointer()).unwrap_or("")
+        json::decode::<PointerState>(f"{{\"at\":{text}}}").map(|p| p.at).unwrap_or((0.0, 0.0, event::Buttons::default()))
+    }
+
+    /// Delivers pointer events while a button is held outside every window,
+    /// for a drag that leaves the window.
+    pub fn capture_pointer(&self, captured: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("App::capture_pointer")
+        support::ok(windowing_app::app_capture_pointer(captured))
+    }
+
+    /// Queues `event` as if the platform had delivered it, to drive a UI from
+    /// tests or record-and-replay.
+    pub fn simulate(&self, event: event::Event) -> Result<(), errors::Error> {
+        support::require_main_thread("App::simulate")
+        support::ok(windowing_app::app_simulate(json::encode(event)))
+    }
+}
+
+// The pointer state as the core encodes it: `[x, y, buttons]`.
+struct PointerState {
+    at: (f64, f64, event::Buttons)
+}
+
+/// The video driver in use (`"x11"`, `"wayland"`, `"windows"`, `"cocoa"`,
+/// `"kmsdrm"`, `"offscreen"`), or "" before `init`.
+pub fn video_driver() -> String {
+    windowing_app::video_driver()
+}
+
+/// The version of the SDL library underneath, as `major.minor.patch`.
+pub fn sdl_version() -> String {
+    windowing_app::sdl_version()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Event
+
+    fn quit(app: super::App) {
+        assert(app.simulate(Event::QuitRequested).is_ok(), "queueing a quit request")
+    }
+
+    #[test]
+    fn a_poll_after_a_wait_reaches_the_events_queued_since() {
+        let app = super::init("windowing-test", driver: "offscreen").unwrap()
+        defer app.finalize()
+        loop {
+            if app.poll().is_none() {
+                break
+            }
+        }
+        quit(app)
+        assert_eq(app.poll(), Some(Event::QuitRequested))
+        quit(app)
+        assert_eq(app.wait().ok(), Some(Event::QuitRequested))
+        quit(app)
+        assert_eq(app.poll(), Some(Event::QuitRequested))
+    }
+}

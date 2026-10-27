@@ -1,0 +1,63 @@
+// Dragging data out of a window to other applications (or the program's own
+// windows). `App::start_drag`, called while a pointer button is held, offers
+// the items; the platform drives the drag until the button is released or
+// Escape is pressed, and `Event::DragFinished` reports what the target did.
+//
+// X11 speaks the XDND protocol, Wayland the core data-device protocol,
+// Windows OLE's `DoDragDrop`, and macOS an AppKit dragging session, in the
+// Rust core. Other drivers answer an error, which `has_outbound_drag` reports.
+
+use std::errors
+use std::encoding::json
+use windowing_app
+use windowing_desktop
+use crate::support
+
+/// One representation of the dragged data: its MIME type and bytes.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DragItem {
+    pub mime: String
+    pub data: Vec<u8>
+}
+
+/// What a drop does with the data.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum DragOperation {
+    #[default]
+    Copy
+    Move
+    Link
+}
+
+/// A drag the program started, as `Event::DragFinished` names it.
+pub newtype DragId = u64
+
+impl crate::App {
+    /// Starts dragging `items` out of `window`, offering `operation`. Call
+    /// it while a pointer button is held (after the drag threshold); the
+    /// drag ends when the button is released or Escape is pressed, and
+    /// `Event::DragFinished` follows with the target's operation, or `None`
+    /// when no target accepted.
+    pub fn start_drag(&self, window: crate::window::Window, items: Vec<DragItem>, operation: DragOperation) -> Result<DragId, errors::Error> {
+        crate::support::require_main_thread("App::start_drag")
+        if items.is_empty() {
+            return Err(errors::new("a drag needs at least one item"))
+        }
+        let mut types: Vec<String> = #[]
+        let mut lengths: Vec<i64> = #[]
+        let mut joined: Vec<u8> = #[]
+        for item in items {
+            types.push(item.mime)
+            lengths.push(item.data.len())
+            joined.extend(item.data)
+        }
+        let raw: u32 = window.id().into()
+        let id = support::ok(windowing_desktop::drag_start(raw as i64, types, joined, lengths, json::encode(operation)))?
+        Ok((id as u64).into())
+    }
+}
+
+/// Whether `App::start_drag` can drag data to other applications here.
+pub fn has_outbound_drag() -> bool {
+    windowing_app::has_outbound_drag()
+}

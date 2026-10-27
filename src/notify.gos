@@ -1,0 +1,47 @@
+// Desktop notifications: the session's notification server on Linux
+// (`org.freedesktop.Notifications`), `NSUserNotificationCenter` on macOS (for
+// a program run from an application bundle), and a notification-area balloon
+// on Windows, which Windows 10 and later show as a toast.
+
+use std::errors
+use std::encoding::json
+use windowing_app
+use windowing_desktop
+use crate::support
+
+/// How urgent a notification is; servers may style or order by it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub enum Urgency {
+    Low
+    #[default]
+    Normal
+    Critical
+}
+
+/// A notification to show. `timeout_ms` of -1 leaves the duration to the
+/// server and 0 keeps it until dismissed.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Notification {
+    pub title: String
+    pub body: String
+    pub urgency: Urgency
+    pub timeout_ms: i64
+}
+
+impl Default for Notification {
+    fn default() -> Notification {
+        Notification { title: "", body: "", urgency: Urgency::Normal, timeout_ms: -1 }
+    }
+}
+
+impl crate::App {
+    /// Shows `notification` through the desktop's notification service.
+    pub fn notify(&self, notification: Notification) -> Result<(), errors::Error> {
+        support::ok(windowing_desktop::notify(json::encode(notification)))
+    }
+}
+
+/// Whether `App::notify` has an adapter on this platform.
+pub fn has_notifications() -> bool {
+    windowing_app::has_notifications()
+}

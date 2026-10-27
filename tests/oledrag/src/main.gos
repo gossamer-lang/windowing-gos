@@ -1,0 +1,92 @@
+// A drag between two processes on the platform's own video driver, for
+// Windows (OLE) and macOS (AppKit), where the drag runs in the window
+// system's own loop. `source` opens window A at (0, 0) and starts dragging
+// text when the pointer moves with the left button held; `target` opens
+// window B at (400, 0) and reports the drop. A driver outside both
+// processes (`run.sh` with XTest under Wine, `run.ps1` with SendInput on
+// Windows) moves the pointer and waits for each line before the next step:
+//
+//   target ready / source ready -> press in A and move
+//   starting drag               -> move into B
+//   drop moved                  -> release
+//   dropped: hello drag, finished: Some(Copy)
+//
+// With `files` the source drags `file:///C:/windows/win.ini` as a
+// `text/uri-list` and the target reports `dropped file: C:\windows\win.ini`.
+
+use std::{env, errors, process}
+use windowing
+use windowing::{DragItem, DragOperation, Event}
+
+fn source(files: bool) -> Result<(), errors::Error> {
+    let app = windowing::init("Drag source")?
+    defer app.finalize()
+    let a = app.window(title: "A", width: 300, height: 300)?
+    a.set_position(0, 0)?
+    let mut frame = a.framebuffer()?
+    frame.fill(30, 90, 160)
+    a.present(frame)?
+    a.sync()?
+    println("source ready")
+    let mut started = false
+    loop {
+        match app.wait()? {
+            Event::PointerMoved { window, buttons, .. } if window == a.id() && !started && buttons.left => {
+                started = true
+                println("starting drag")
+                let item = if files {
+                    DragItem { mime: "text/uri-list", data: "file:///C:/windows/win.ini\r\n".bytes() }
+                } else {
+                    DragItem { mime: "text/plain;charset=utf-8", data: "hello drag".bytes() }
+                }
+                let _ = app.start_drag(a, #[item], DragOperation::Copy)?
+            }
+            Event::DragFinished { operation, .. } => {
+                println(f"finished: {operation}")
+                return Ok(())
+            }
+            Event::QuitRequested => return Err(errors::new("quit before the drag finished"))
+            _ => ()
+        }
+    }
+}
+
+fn target() -> Result<(), errors::Error> {
+    let app = windowing::init("Drop target")?
+    defer app.finalize()
+    let b = app.window(title: "B", width: 300, height: 300)?
+    b.set_position(400, 0)?
+    let mut frame = b.framebuffer()?
+    frame.fill(160, 90, 30)
+    b.present(frame)?
+    b.sync()?
+    println("target ready")
+    let mut moved = false
+    loop {
+        match app.wait()? {
+            Event::DropMoved { window, .. } if window == b.id() && !moved => {
+                moved = true
+                println("drop moved")
+            }
+            Event::DroppedText { window, text, .. } if window == b.id() => {
+                println(f"dropped: {text}")
+                return Ok(())
+            }
+            Event::DroppedFile { window, path, .. } if window == b.id() => {
+                println(f"dropped file: {path}")
+                return Ok(())
+            }
+            Event::QuitRequested => return Err(errors::new("quit before the drop"))
+            _ => ()
+        }
+    }
+}
+
+fn main() {
+    let args = env::args()
+    let result = if args.contains("source") { source(args.contains("files")) } else if args.contains("target") { target() } else { Err(errors::new("usage: windowing-oledrag source|target")) }
+    if let Err(e) = result {
+        eprintln(f"oledrag: {e}")
+        process::exit(1)
+    }
+}

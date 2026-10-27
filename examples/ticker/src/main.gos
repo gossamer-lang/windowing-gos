@@ -1,0 +1,61 @@
+// A goroutine produces values on a channel and wakes the window's loop with
+// a Waker; the loop drains the channel and redraws. The pattern every
+// program with background work uses: channels carry the values, the waker
+// only says to look.
+
+use std::{errors, process, runtime, time}
+use std::sync::channel_unbounded
+use windowing
+use windowing::Event
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("Ticker", app_id: "dev.gossamer.windowing.ticker")?
+    defer app.finalize()
+    let win = app.window(title: "Ticker", width: 480, height: 120)?
+    let tx, rx = channel_unbounded()
+    let waker = app.waker()
+    let mut latest = 0
+    cohort {
+        spawn(|| {
+            for tick in 0..100 {
+                time::sleep(time::Duration::from_millis(100))
+                if runtime::cohort_cancelled() {
+                    break
+                }
+                tx.send(tick)
+                if waker.wake().is_err() {
+                    break
+                }
+            }
+        })
+        loop {
+            match app.wait()? {
+                Event::CloseRequested { .. } | Event::QuitRequested => break
+                Event::Wake => {
+                    while let Some(tick) = rx.try_recv() {
+                        latest = tick
+                    }
+                    win.request_redraw()?
+                }
+                Event::RedrawRequested { .. } => {
+                    let mut frame = win.framebuffer()?
+                    let shade = (latest * 2 % 256) as u8
+                    frame.fill(shade, 64, 255 - shade)
+                    win.present(frame)?
+                    win.set_title(f"Ticker: {latest}")?
+                }
+                _ => ()
+            }
+        }
+        // The window is closing: the producer stops at its next tick
+        // instead of running out its count.
+        runtime::cohort_cancel()
+    }
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"ticker: {e}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,14 @@
+[project]
+id = "github.com/gossamer-lang/windowing-gos"
+version = "0.1.0"
+gossamer-version = "^v0.75.3"
+authors = ["Dan Pozmanter"]
+license = "Apache 2.0"
+
+[lib]
+name = "windowing"
+
+[rust-bindings]
+windowing-binding = { path = "rust/binding" }
+
+[dependencies]

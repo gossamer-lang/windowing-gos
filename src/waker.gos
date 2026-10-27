@@ -1,0 +1,17 @@
+// Waking the main loop from other goroutines.
+
+use std::errors
+use windowing_app
+use crate::support
+
+/// Wakes `App::wait` from any goroutine: the wait returns `Event::Wake`.
+/// Wakes that arrive while one is still queued fold into it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Waker {}
+
+impl Waker {
+    /// Queues one `Event::Wake` unless one is already queued.
+    pub fn wake(&self) -> Result<(), errors::Error> {
+        support::ok(windowing_app::app_wake())
+    }
+}

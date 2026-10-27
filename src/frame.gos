@@ -1,0 +1,25 @@
+// The theme of a window's frame: the title bar and borders the window system
+// draws. Every window starts with the desktop's theme; a program whose own
+// theme differs sets the frame's so the title bar matches its content.
+
+use std::errors
+use std::encoding::json
+use windowing_window
+
+use crate::support
+use crate::system::Theme
+use crate::window::Window
+
+impl Window {
+    /// Gives the window's frame `theme`, or the desktop's with `None`. On
+    /// Wayland the compositor draws the frame and keeps its own theme.
+    pub fn set_frame_theme(&self, theme: Option<Theme>) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_frame_theme")
+        let raw: u32 = self.id().into()
+        let encoded = match theme {
+            Some(t) => json::encode(t)
+            None => ""
+        }
+        support::ok(windowing_window::window_set_frame_theme(raw as i64, encoded))
+    }
+}

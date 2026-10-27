@@ -1,0 +1,34 @@
+// Reads the desktop's preferences, waits for `Event::PreferencesChanged`,
+// and reads them again. `run.sh` serves them from a stand-in desktop portal
+// on a private session bus and changes them once the first read is printed.
+// With `x11` it reads them once on the X11 driver, where the display's DPI
+// may already carry the text scale.
+use std::{env, errors, process}
+use windowing
+use windowing::Event
+
+fn run() -> Result<(), errors::Error> {
+    let x11 = env::args().get(0) == Some("x11")
+    let app = windowing::init("Preferences probe", driver: if x11 { "x11" } else { "offscreen" })?
+    defer app.finalize()
+    println(f"first: {windowing::system::preferences()}")
+    if x11 {
+        return Ok(())
+    }
+    loop {
+        match app.wait()? {
+            Event::PreferencesChanged => break
+            Event::QuitRequested => return Ok(())
+            _ => ()
+        }
+    }
+    println(f"second: {windowing::system::preferences()}")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"preferences probe: {e}")
+        process::exit(1)
+    }
+}

@@ -1,0 +1,49 @@
+// A window with a software-rendered picture: F toggles fullscreen, Escape
+// or closing the window quits. The picture redraws on every resize and
+// scale change, rows rendered in parallel.
+
+use std::{errors, process}
+use windowing
+use windowing::{Event, Key}
+
+fn draw(frame: windowing::Frame) -> windowing::Frame {
+    let mut out = frame
+    let width = out.width
+    let height = out.height
+    let r, g, b = out.format.rgb_offsets()
+    out.pixels.par_chunks_mut(out.stride, |y, row| {
+        for x in 0..width {
+            let at = x * 4
+            row[at + r] = (x * 255 / width) as u8
+            row[at + g] = (y * 255 / height) as u8
+            row[at + b] = 160
+            row[at + 3] = 255
+        }
+    })
+    out
+}
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("Hello", app_id: "dev.gossamer.windowing.hello")?
+    defer app.finalize()
+
+    let win = app.window(title: "Hello", width: 900, height: 600, resizable: true)?
+    loop {
+        match app.wait()? {
+            Event::CloseRequested { .. } | Event::QuitRequested | Event::KeyDown { key: Key::Escape, .. } => break
+            Event::KeyDown { key: Key::F, repeat: false, .. } => win.set_fullscreen(!win.is_fullscreen())?
+            Event::RedrawRequested { .. } | Event::PixelSizeChanged { .. } | Event::ScaleChanged { .. } => {
+                win.present(draw(win.framebuffer()?))?
+            }
+            _ => ()
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"hello: {e}")
+        process::exit(1)
+    }
+}

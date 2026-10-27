@@ -1,0 +1,76 @@
+// A tray icon with a menu. Choosing "Dark" or "Light" moves the radio
+// check; "Quit" ends the program. `--fixture` simulates one choice and exits,
+// for checks without a desktop.
+
+use std::{env, errors, process}
+use windowing
+use windowing::{Event, MenuEntry, MenuSource, TrayIcon}
+
+const DARK: u32 = 1
+const LIGHT: u32 = 2
+const QUIT: u32 = 3
+
+fn entries(dark: bool) -> Vec<MenuEntry> {
+    #[
+        MenuEntry::Radio { id: DARK, title: "Dark", enabled: true, checked: dark, group: 1, shortcut: None }
+        MenuEntry::Radio { id: LIGHT, title: "Light", enabled: true, checked: !dark, group: 1, shortcut: None }
+        MenuEntry::Separator
+        MenuEntry::Action { id: QUIT, title: "Quit", enabled: true, shortcut: None }
+    ]
+}
+
+fn icon() -> TrayIcon {
+    let mut rgba = #[]
+    for y in 0..16 {
+        for x in 0..16 {
+            let inside = (x - 8) * (x - 8) + (y - 8) * (y - 8) < 49
+            rgba.push(if inside { 70u8 } else { 0u8 })
+            rgba.push(if inside { 130u8 } else { 0u8 })
+            rgba.push(if inside { 220u8 } else { 0u8 })
+            rgba.push(if inside { 255u8 } else { 0u8 })
+        }
+    }
+    TrayIcon { rgba: rgba, width: 16, height: 16 }
+}
+
+fn run(fixture: bool) -> Result<(), errors::Error> {
+    let app = windowing::init("Tray", app_id: "dev.gossamer.windowing.tray")?
+    defer app.finalize()
+    let tray = app.tray(Some(icon()), "windowing tray example")?
+    defer tray.close()
+    let mut dark = true
+    tray.set_menu(entries(dark))?
+    if fixture {
+        app.simulate(Event::MenuSelected { source: MenuSource::Tray { tray: tray.id() }, item: LIGHT })?
+        app.simulate(Event::MenuSelected { source: MenuSource::Tray { tray: tray.id() }, item: QUIT })?
+    }
+    loop {
+        match app.wait()? {
+            Event::MenuSelected { source: MenuSource::Tray { tray: from }, item } => {
+                if from != tray.id() {
+                    continue
+                }
+                println(f"chose {item}")
+                match item {
+                    DARK => dark = true
+                    LIGHT => dark = false
+                    QUIT => break
+                    _ => {}
+                }
+                tray.set_menu(entries(dark))?
+            }
+            Event::QuitRequested => break
+            _ => {}
+        }
+    }
+    println(f"dark: {dark}")
+    Ok(())
+}
+
+fn main() {
+    let fixture = env::args().contains("--fixture")
+    if let Err(e) = run(fixture) {
+        eprintln(f"tray: {e}")
+        process::exit(1)
+    }
+}

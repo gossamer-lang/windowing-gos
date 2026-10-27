@@ -1,0 +1,451 @@
+// The offscreen fixtures: every one runs under SDL's `offscreen` video
+// driver, needs no display, and prints a transcript `run.sh` compares
+// across the bytecode VM, the JIT, and native builds.
+
+use std::{errors, process}
+use std::sync::channel_unbounded
+use windowing
+use windowing::{Buttons, Event, Key, Mods, MouseButton, PenState, PointerSource, Rect, Scancode}
+use windowing::{DialogChoice, DragOperation, MenuSource, Orientation, PenAxis, Theme}
+use windowing::{FileDialog, GlOptions, HitArea, Question, WindowOptions}
+use windowing::{clipboard, cursor, dialog, display, surface, system}
+
+fn section(name: String) {
+    println(f"== {name}")
+}
+
+// The next event, which the fixture has just queued or the driver sends.
+fn next(app: windowing::App) -> Result<Event, errors::Error> {
+    match app.wait_timeout(2000)? {
+        Some(e) => Ok(e)
+        None => Err(errors::new("no event arrived within two seconds"))
+    }
+}
+
+// Drops what the driver queued on its own (shown, exposed, focus), so each
+// section starts from an empty queue.
+fn settle(app: windowing::App) {
+    loop {
+        if app.poll().is_none() {
+            break
+        }
+    }
+}
+
+// What a call the offscreen driver may not support answered.
+fn report(label: String, outcome: Result<(), errors::Error>) {
+    match outcome {
+        Ok(_) => println(f"{label}: ok")
+        Err(e) => println(f"{label}: {e}")
+    }
+}
+
+// FNV-1a over the bytes, for a checksum every tier computes the same way.
+fn checksum(bytes: Vec<u8>) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64
+    for b in bytes {
+        hash = (hash ^ b as u64) *% 0x100000001b3u64
+    }
+    hash
+}
+
+fn windows(app: windowing::App) -> Result<windowing::Window, errors::Error> {
+    section("windows")
+    let win = app.window(title: "first", width: 320, height: 200, resizable: true)?
+    println(f"title {win.title()} size {win.size()} pixels {win.pixel_size()} scale {win.scale()}")
+    win.set_size(400, 300)?
+    win.sync()?
+    println(f"resized {win.size()} {win.pixel_size()}")
+    win.set_title("renamed")?
+    println(f"retitled {win.title()}")
+    win.set_min_size(100, 100)?
+    win.set_max_size(1000, 1000)?
+    match win.set_opacity(0.5) {
+        Ok(_) => println(f"opacity {win.opacity()}")
+        Err(e) => println(f"opacity refused: {e}")
+    }
+    let hidden = app.window_with(WindowOptions {
+        title: "hidden"
+        width: 100
+        height: 80
+        hidden: true
+        ..WindowOptions::default()
+    })?
+    println(f"hidden visible {hidden.is_visible()} focus {hidden.has_focus()}")
+    hidden.show()?
+    println(f"shown visible {hidden.is_visible()}")
+    let found = app.window_by_id(hidden.id()).is_some()
+    hidden.close()
+    println(f"found {found} after close {app.window_by_id(hidden.id()).is_some()}")
+    settle(app)
+    Ok(win)
+}
+
+fn events(app: windowing::App, win: windowing::Window) -> Result<(), errors::Error> {
+    section("events")
+    let id = win.id()
+    let ctrl = Mods { ctrl: true, ..Mods::default() }
+    let queued = #[
+        Event::KeyDown { window: id, key: Key::F, scancode: Scancode::F, mods: ctrl, repeat: false }
+        Event::KeyUp { window: id, key: Key::Char('['), scancode: Scancode::LeftBracket, mods: Mods::default() }
+        Event::KeyDown { window: id, key: Key::F5, scancode: Scancode::F5, mods: Mods { shift: true, alt: true, ..Mods::default() }, repeat: true }
+        Event::Text { window: id, text: "héllo, 世界" }
+        Event::Composing { window: id, text: "かな", cursor: 1, selection: 1 }
+        Event::PointerMoved {
+            window: id
+            x: 10.5
+            y: 20.25
+            dx: 1.0
+            dy: -2.0
+            buttons: Buttons { left: true, ..Buttons::default() }
+            source: PointerSource::Mouse
+        }
+        Event::ButtonDown { window: id, button: MouseButton::Right, x: 3.0, y: 4.0, clicks: 2, source: PointerSource::Mouse }
+        Event::ButtonUp { window: id, button: MouseButton::Back, x: 3.0, y: 4.0, clicks: 1, source: PointerSource::Touch }
+        Event::Wheel { window: id, dx: 0.0, dy: -1.5, x: 50.0, y: 60.0 }
+        Event::TouchDown { window: id, device: 7, finger: 1, x: 100.0, y: 150.0, pressure: 0.5 }
+        Event::TouchUp { window: id, device: 7, finger: 1, x: 100.0, y: 150.0 }
+        Event::PenMoved { window: id, pen: 3, x: 12.0, y: 13.0, state: PenState { down: true, eraser: false, primary_button: true, ..PenState::default() } }
+        Event::DropBegan { window: id }
+        Event::DroppedFile { window: id, path: "/tmp/picture.png", x: 30.0, y: 40.0 }
+        Event::DroppedText { window: id, text: "dragged text", x: 31.0, y: 41.0 }
+        Event::DropEnded { window: id, x: 31.0, y: 41.0 }
+        Event::FocusLost { window: id }
+        Event::CloseRequested { window: id }
+        Event::QuitRequested
+    ]
+    for e in queued {
+        app.simulate(e)?
+        println(f"{next(app)?:?}")
+    }
+    win.request_redraw()?
+    println(f"{next(app)?:?}")
+    Ok(())
+}
+
+// Every event the platform alone sends, queued by `simulate` and read back
+// equal to what was queued.
+fn platform_events(app: windowing::App, win: windowing::Window) -> Result<(), errors::Error> {
+    section("platform events")
+    let id = win.id()
+    let d = display::primary()?.id
+    let queued = #[
+        Event::Terminating
+        Event::LowMemory
+        Event::Suspending
+        Event::Suspended
+        Event::Resuming
+        Event::Resumed
+        Event::LocaleChanged
+        Event::KeymapChanged
+        Event::ThemeChanged { theme: Theme::Dark }
+        Event::ClipboardChanged { owned: true }
+        Event::DialogClosed { dialog: 7u64.into(), choice: DialogChoice::Chosen { paths: #["/tmp/a.png", "/tmp/b.png"], filter: Some(1) } }
+        Event::DialogClosed { dialog: 8u64.into(), choice: DialogChoice::Cancelled }
+        Event::DialogClosed { dialog: 9u64.into(), choice: DialogChoice::Failed { reason: "no portal" } }
+        Event::DisplayAdded { display: d }
+        Event::DisplayRemoved { display: d }
+        Event::DisplayMoved { display: d }
+        Event::DisplayModeChanged { display: d }
+        Event::DisplayScaleChanged { display: d }
+        Event::DisplayUsableBoundsChanged { display: d }
+        Event::DisplayOrientationChanged { display: d, orientation: Orientation::PortraitFlipped }
+        Event::WindowShown { window: id }
+        Event::WindowHidden { window: id }
+        Event::Moved { window: id, x: 10, y: -20 }
+        Event::Resized { window: id, width: 640, height: 480 }
+        Event::PixelSizeChanged { window: id, width: 1280, height: 960 }
+        Event::ScaleChanged { window: id, scale: 2.0 }
+        Event::Minimized { window: id }
+        Event::Maximized { window: id }
+        Event::Restored { window: id }
+        Event::PointerEntered { window: id }
+        Event::PointerLeft { window: id }
+        Event::FocusGained { window: id }
+        Event::DisplayChanged { window: id, display: d }
+        Event::Occluded { window: id }
+        Event::EnteredFullscreen { window: id }
+        Event::LeftFullscreen { window: id }
+        Event::TouchMoved { window: id, device: 7, finger: 1, x: 1.0, y: 2.0, dx: 0.5, dy: 0.25, pressure: 0.75 }
+        Event::TouchCancelled { window: id, device: 7, finger: 1 }
+        Event::PinchBegan { window: id }
+        Event::Pinch { window: id, scale: 1.25 }
+        Event::PinchEnded { window: id }
+        Event::PenEntered { window: id, pen: 4 }
+        Event::PenDown { window: id, pen: 4, x: 3.0, y: 4.0, eraser: true }
+        Event::PenButtonDown { window: id, pen: 4, button: 2, x: 3.0, y: 4.0 }
+        Event::PenAxisChanged { window: id, pen: 4, axis: PenAxis::TiltX, value: -30.5, x: 3.0, y: 4.0 }
+        Event::PenButtonUp { window: id, pen: 4, button: 2, x: 3.0, y: 4.0 }
+        Event::PenUp { window: id, pen: 4, x: 3.0, y: 4.0, eraser: false }
+        Event::PenLeft { window: id, pen: 4 }
+        Event::DropMoved { window: id, x: 5.0, y: 6.0 }
+        Event::MenuSelected { source: MenuSource::MenuBar { window: Some(id) }, item: 11 }
+        Event::MenuSelected { source: MenuSource::MenuBar { window: None }, item: 12 }
+        Event::MenuSelected { source: MenuSource::Tray { tray: 3u32.into() }, item: 13 }
+        Event::DragFinished { drag: 5u64.into(), operation: Some(DragOperation::Move) }
+        Event::DragFinished { drag: 6u64.into(), operation: None }
+        Event::OpenRequested { path: "/tmp/report.txt" }
+        Event::Wake
+    ]
+    for e in queued {
+        app.simulate(e)?
+        let got = next(app)?
+        if got == e {
+            println(f"{got:?}")
+        } else {
+            println(f"queued {e:?} but read {got:?}")
+        }
+    }
+    Ok(())
+}
+
+fn framebuffer(app: windowing::App, win: windowing::Window) -> Result<(), errors::Error> {
+    section("framebuffer")
+    let mut frame = win.framebuffer()?
+    println(f"{frame.width}x{frame.height} stride {frame.stride} format {frame.format:?}")
+    let width = frame.width
+    let r, g, b = frame.format.rgb_offsets()
+    frame.pixels.par_chunks_mut(frame.stride, |y, row| {
+        for x in 0..width {
+            let at = x * 4
+            row[at + r] = (x % 256) as u8
+            row[at + g] = (y % 256) as u8
+            row[at + b] = ((x + y) % 256) as u8
+            row[at + 3] = 255
+        }
+    })
+    let drawn = checksum(frame.pixels)
+    win.present(frame)?
+    let shown = win.capture()?
+    println(f"drawn {drawn} shown {checksum(shown.pixels)} same {drawn == checksum(shown.pixels)}")
+    let mut stale = win.framebuffer()?
+    win.set_size(200, 100)?
+    win.sync()?
+    settle(app)
+    stale.fill(1, 2, 3)
+    match win.present(stale) {
+        Ok(_) => println("stale frame presented")
+        Err(e) => println(f"stale frame refused: {e}")
+    }
+    let mut fresh = win.framebuffer()?
+    fresh.fill(255, 0, 0)
+    win.present(fresh)?
+    let red = win.capture()?
+    let ro, _, _ = red.format.rgb_offsets()
+    println(f"after resize {red.width}x{red.height} first red byte {red.pixels[ro]}")
+    let mut dotted = win.framebuffer()?
+    dotted.fill(0, 0, 0)
+    dotted.set_pixel(2, 1, 9, 8, 7)
+    let dr, dg, db = dotted.format.rgb_offsets()
+    let at = dotted.stride + 2 * 4
+    println(f"set pixel {dotted.pixels[at + dr]} {dotted.pixels[at + dg]} {dotted.pixels[at + db]} {dotted.pixels[at + 3]} neighbour {dotted.pixels[at + 4 + dr]}")
+    win.present(dotted)?
+    // Fetching the resized surface delivers the resize's window events.
+    settle(app)
+    Ok(())
+}
+
+fn waker(app: windowing::App) -> Result<(), errors::Error> {
+    section("waker")
+    let tx, rx = channel_unbounded()
+    let waker = app.waker()
+    cohort {
+        spawn(|| {
+            tx.send(42)
+            waker.wake()
+        })
+        loop {
+            match next(app)? {
+                Event::Wake => break
+                other => println(f"skipped {other:?}")
+            }
+        }
+    }?
+    println(f"woken with {rx.try_recv():?}")
+    // Wakes before the loop takes the event fold into one.
+    let again = app.waker()
+    again.wake()?
+    again.wake()?
+    again.wake()?
+    let mut wakes = 0
+    while let Some(e) = app.wait_timeout(200)? {
+        if let Event::Wake = e {
+            wakes += 1
+        }
+    }
+    println(f"three wakes queued {wakes} event")
+    Ok(())
+}
+
+fn clipboard_section() -> Result<(), errors::Error> {
+    section("clipboard")
+    clipboard::set_text("parity ✓")?
+    println(f"text {clipboard::text()?:?} has {clipboard::has_text()}")
+    clipboard::set_data(#[("text/plain", "plain".bytes()), ("application/x-parity", #[1u8, 2, 3])])?
+    println(f"types {clipboard::mime_types()?}")
+    println(f"custom {clipboard::data("application/x-parity")?:?}")
+    println(f"missing {clipboard::data("image/png")?:?}")
+    clipboard::clear()?
+    println(f"cleared has {clipboard::has_text()}")
+    clipboard::set_data(#[("application/x-parity", #[9u8])])?
+    println(f"has data {clipboard::has_data("application/x-parity")} {clipboard::has_data("image/png")} text {clipboard::has_text()}")
+    match clipboard::set_data(#[]) {
+        Ok(_) => println("an empty offer was set")
+        Err(e) => println(f"empty offer: {e}")
+    }
+    clipboard::set_primary_text("primary ✓")?
+    println(f"primary {clipboard::primary_text()?:?} has {clipboard::has_primary_text()}")
+    Ok(())
+}
+
+fn platform(mut app: windowing::App, win: windowing::Window) -> Result<(), errors::Error> {
+    section("displays")
+    let all = display::all()?
+    let primary = display::primary()?
+    println(f"count {all.len()} primary first {all[0].id == primary.id} bounds {primary.bounds:?}")
+    println(f"window on primary {win.display()?.id == primary.id}")
+    println(f"by id {display::get(primary.id)? == primary} modes {display::modes(primary.id)?.len()}")
+    section("system")
+    println(f"theme {system::theme():?} screensaver {system::screensaver_enabled()}")
+    match system::inhibit_screensaver(true) {
+        Ok(_) => println(f"inhibited screensaver {system::screensaver_enabled()}")
+        Err(e) => println(f"inhibit refused: {e}")
+    }
+    let _ = system::inhibit_screensaver(false)
+    let locales = system::locales()?
+    let distinct = locales.iter().enumerate().all(|(i, l)| !locales[..i].contains(l))
+    println(f"locales distinct {distinct}")
+    section("capabilities")
+    println(f"native menu bar {windowing::menu::has_native_menu_bar()} notifications {windowing::notify::has_notifications()} outbound drag {windowing::drag::has_outbound_drag()}")
+    match app.set_menu_bar(#[]) {
+        Ok(_) => println("menu bar installed")
+        Err(e) => println(f"menu bar refused: {e}")
+    }
+    section("cursor")
+    match cursor::system(cursor::SystemCursor::Pointer) {
+        Ok(c) => {
+            c.show()?
+            println("system cursor shown")
+        }
+        Err(e) => println(f"system cursor refused: {e}")
+    }
+    match cursor::custom(#[255u8; 16 * 16 * 4], 16, 16, 8, 8) {
+        Ok(c) => {
+            c.show()?
+            println("custom cursor shown")
+        }
+        Err(e) => println(f"custom cursor refused: {e}")
+    }
+    match cursor::custom(#[0u8; 3], 1, 1, 0, 0) {
+        Ok(_) => println("a 3-byte image made a cursor")
+        Err(e) => println(f"bad image: {e}")
+    }
+    match cursor::custom(#[], 0, 0, 0, 0) {
+        Ok(_) => println("an empty image made a cursor")
+        Err(e) => println(f"empty image: {e}")
+    }
+    report("hide cursor", cursor::hide())
+    println(f"cursor visible {cursor::is_visible()}")
+    report("show cursor", cursor::show())
+    println(f"cursor visible {cursor::is_visible()}")
+    section("window state")
+    report("hit test", win.set_hit_test(Some(|x: f64, y: f64| if y < 20.0 { HitArea::Draggable } else { HitArea::Normal })))
+    report("hit test cleared", win.set_hit_test(None))
+    report("text area", win.set_text_input_area(Rect { x: 10, y: 20, width: 100, height: 16 }, 4))
+    report("text input", win.start_text_input())
+    println(f"text input active {win.is_text_input_active()}")
+    report("text input stopped", win.stop_text_input())
+    let platform_caps = windowing::capabilities()
+    assert_eq(platform_caps.driver, windowing::video_driver())
+    assert(platform_caps.features.len() >= 40)
+    assert_eq(platform_caps.get("reconversion").unwrap().support, windowing::Support::Unavailable)
+    let caps = windowing::window::text_input_capabilities()
+    println(f"text input capabilities {caps.cursor_area} {caps.surrounding_text} {caps.purpose_hints}")
+    report("password input", win.start_text_input_with(windowing::TextInputOptions { purpose: windowing::TextPurpose::Password, capitalization: Some(windowing::Capitalization::Nothing), autocorrect: false, multiline: false }))
+    println(f"text input active {win.is_text_input_active()}")
+    report("text input stopped", win.stop_text_input())
+    report("default input", win.start_text_input_with(windowing::TextInputOptions::default()))
+    report("text input stopped", win.stop_text_input())
+    match win.raw_handle() {
+        Ok(_) => println("raw handle under offscreen")
+        Err(e) => println(f"raw handle: {e}")
+    }
+    report("icon", win.set_icon(#[0u8; 32 * 32 * 4], 32, 32))
+    report("backdrop", win.set_backdrop(windowing::Backdrop::Mica))
+    report("maximize", win.maximize())
+    report("restore", win.restore())
+    report("attention", win.request_attention(windowing::Attention::Briefly))
+    report("relative pointer", win.set_relative_pointer(true))
+    println(f"relative {win.is_relative_pointer()}")
+    report("absolute pointer", win.set_relative_pointer(false))
+    report("fullscreen", win.set_fullscreen(true))
+    println(f"fullscreen {win.is_fullscreen()}")
+    report("windowed", win.set_fullscreen(false))
+    println(f"position {win.position()}")
+    report("move", win.set_position(40, 50))
+    report("resizable", win.set_resizable(false))
+    report("bordered", win.set_bordered(false))
+    report("on top", win.set_always_on_top(true))
+    report("minimize", win.minimize())
+    println(f"minimized {win.is_minimized()} maximized {win.is_maximized()}")
+    report("confined", win.set_pointer_confined(true))
+    report("capture pointer", app.capture_pointer(true))
+    win.warp_pointer(15.0, 25.0)
+    settle(app)
+    println(f"pointer {app.pointer()}")
+    match app.window(title: "empty", width: 0, height: 10) {
+        Ok(_) => println("a window of no width opened")
+        Err(e) => println(f"empty window: {e}")
+    }
+    report("negative size", win.set_size(-1, 5))
+    report("live resize hook", app.on_live_resize(|w: windowing::Window| { let _ = w.request_redraw() }))
+    report("live resize replaced", app.on_live_resize(|_w: windowing::Window| ()))
+    report("live resize cleared", app.clear_live_resize())
+    section("keyboard")
+    println(f"key at A {app.key_at(Scancode::A):?} names {app.key_name(Key::Return)} {app.key_name(Key::Char('['))} {app.key_name(Key::F5)}")
+    println(f"mods {app.mods().shortcut()} A held {app.is_key_down(Scancode::A)}")
+    section("surfaces")
+    match win.gl_context(GlOptions::default()) {
+        Ok(_) => println("a software window made a GL context")
+        Err(e) => println(f"gl context: {e}")
+    }
+    match win.metal_view() {
+        Ok(_) => println("metal view under offscreen")
+        Err(e) => println(f"metal view: {e}")
+    }
+    match surface::vulkan_instance_extensions() {
+        Ok(names) => println(f"vulkan surface extension listed {names.contains("VK_KHR_surface")}")
+        Err(e) => println(f"vulkan: {e}")
+    }
+    section("dialogs")
+    // A dialog that opened would wait for a person; only refusals run here.
+    match dialog::ask(Question::default()) {
+        Ok(_) => println("a question without buttons was shown")
+        Err(e) => println(f"question without buttons: {e}")
+    }
+    println(f"default file dialog {FileDialog::default():?}")
+    Ok(())
+}
+
+fn run() -> Result<(), errors::Error> {
+    let app = windowing::init("parity", app_id: "dev.gossamer.windowing.parity", driver: "offscreen")?
+    defer app.finalize()
+    section("driver")
+    println(f"{windowing::video_driver()} sdl {windowing::sdl_version()}")
+    let win = windows(app)?
+    events(app, win)?
+    platform_events(app, win)?
+    framebuffer(app, win)?
+    waker(app)?
+    clipboard_section()?
+    platform(app, win)?
+    section("done")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"parity: {e}")
+        process::exit(1)
+    }
+}

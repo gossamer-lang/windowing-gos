@@ -1,0 +1,306 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOSSAMER_REPO: gossamer-lang/gossamer
+  # The video driver for every job that needs no display: SDL's
+  # `offscreen` driver keeps windows in memory.
+  SDL_VIDEO_DRIVER: offscreen
+
+jobs:
+  # Formatting, lint, and the generated sources say nothing about a
+  # display, so they run once and answer first.
+  static:
+    name: fmt, lint, generated sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the Gossamer toolchain
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: gos --version
+      - name: Format, lint, and regenerate
+        run: ./quick-check.sh
+
+  # The unit suite and the offscreen fixtures on all four tiers.
+  linux:
+    name: test and tier parity (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SDL's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+      - name: Install the Gossamer toolchain
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: gos --version
+      - name: Test
+        run: gos test .
+      - name: Tier parity (VM, JIT, debug and release native)
+        run: tests/parity/run.sh
+      - name: Build every example
+        run: |
+          for dir in examples/*/; do
+            (cd "$dir" && gos build --release .)
+          done
+
+  # A real window on each platform's own video driver: open, present a
+  # frame, read it back, close through the event queue, exit 0.
+  smoke:
+    name: real-driver smoke (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux X11
+            os: ubuntu-latest
+            driver: x11
+          - name: Linux Wayland
+            os: ubuntu-latest
+            driver: wayland
+          - name: macOS
+            os: macos-latest
+            driver: cocoa
+          - name: Windows
+            os: windows-latest
+            driver: windows
+    env:
+      SDL_VIDEO_DRIVER: ${{ matrix.driver }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install SDL's build dependencies and a display server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config xvfb weston \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+      - name: Install the Gossamer toolchain (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install LLVM and Ninja (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install llvm@22 ninja
+          prefix="$(brew --prefix llvm@22)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc" >> "$GITHUB_ENV"
+      # The upstream LLVM Windows installer ships no `opt` or `llc`, the two
+      # tools `gos build` drives; MSYS2's LLVM carries both.
+      - name: Install the Gossamer toolchain and LLVM (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
+          $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
+          Add-Content $env:GITHUB_PATH $bin
+          & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed mingw-w64-x86_64-llvm
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+          Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
+          Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
+      - run: gos --version
+
+      - name: Build the smoke program
+        working-directory: tests/smoke
+        run: gos build --release .
+
+      - name: Run on X11 (Xvfb)
+        if: matrix.driver == 'x11'
+        working-directory: tests/smoke
+        run: xvfb-run -a ./target/release/windowing-smoke
+      # Weston opens its socket once its headless output is up; the program
+      # starts when the socket exists, and the step fails if Weston exits
+      # first.
+      - name: Run on Wayland (headless Weston)
+        if: matrix.driver == 'wayland'
+        working-directory: tests/smoke
+        run: |
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless --socket=smoke --idle-time=0 &
+          export WAYLAND_DISPLAY=smoke
+          until [ -S "$XDG_RUNTIME_DIR/smoke" ]; do
+            kill -0 $! || { echo "weston exited before opening its socket" >&2; exit 1; }
+            sleep 0.1
+          done
+          ./target/release/windowing-smoke
+      - name: Run (macOS)
+        if: runner.os == 'macOS'
+        working-directory: tests/smoke
+        run: ./target/release/windowing-smoke
+      - name: Run (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tests/smoke
+        shell: pwsh
+        run: |
+          .\target\release\windowing-smoke.exe
+          if ($LASTEXITCODE -ne 0) { throw "smoke exited $LASTEXITCODE" }
+
+  # The platform services on each platform's own window system: frame
+  # theme, backdrop and notifications (read back from the window system
+  # where it answers), a drag between two processes, and the screen-reader
+  # provider driven by a client the way a screen reader drives it.
+  platform:
+    name: platform services (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux X11
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install SDL's build dependencies and a display server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config xvfb dbus \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev libxtst-dev
+      - name: Install the Gossamer toolchain (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install LLVM and Ninja (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install llvm@22 ninja
+          prefix="$(brew --prefix llvm@22)"
+          echo "GOS_LLVM_OPT=$prefix/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=$prefix/bin/llc" >> "$GITHUB_ENV"
+      - name: Install the Gossamer toolchain, LLVM and GCC (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
+          $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
+          Add-Content $env:GITHUB_PATH $bin
+          & 'C:\msys64\usr\bin\pacman.exe' -S --noconfirm --needed mingw-w64-x86_64-llvm mingw-w64-x86_64-gcc
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed (exit $LASTEXITCODE)" }
+          Add-Content $env:GITHUB_ENV "GOS_LLVM_OPT=C:\msys64\mingw64\bin\opt.exe"
+          Add-Content $env:GITHUB_ENV "GOS_LLC=C:\msys64\mingw64\bin\llc.exe"
+
+      - name: Build the probes
+        shell: bash
+        run: |
+          for dir in tests/platform tests/uia tests/oledrag; do
+            (cd "$dir" && gos build --release .)
+          done
+
+      # A private session bus keeps the notification off any real desktop.
+      - name: Platform probe (Linux X11)
+        if: runner.os == 'Linux'
+        working-directory: tests/platform
+        env:
+          SDL_VIDEO_DRIVER: x11
+        run: xvfb-run -a dbus-run-session -- ./target/release/windowing-platform
+      - name: XDND drag between two windows (Linux X11)
+        if: runner.os == 'Linux'
+        run: tests/xdnd/run.sh
+
+      - name: Platform probe (macOS)
+        if: runner.os == 'macOS'
+        working-directory: tests/platform
+        env:
+          SDL_VIDEO_DRIVER: cocoa
+        run: ./target/release/windowing-platform
+      - name: NSAccessibility self-check (macOS)
+        if: runner.os == 'macOS'
+        working-directory: tests/uia
+        env:
+          SDL_VIDEO_DRIVER: cocoa
+        run: ./target/release/windowing-uia --self-check
+
+      # Windows 11 22H2 and later (and Server 2025) read the frame theme and
+      # backdrop back, so a missing read-back fails the step.
+      - name: Platform probe (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tests/platform
+        shell: pwsh
+        env:
+          SDL_VIDEO_DRIVER: windows
+        run: |
+          .\target\release\windowing-platform.exe --expect-dwm
+          if ($LASTEXITCODE -ne 0) { throw "platform probe exited $LASTEXITCODE" }
+      - name: OLE drag between two processes (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tests/oledrag
+        shell: pwsh
+        env:
+          SDL_VIDEO_DRIVER: windows
+        run: .\run.ps1
+      - name: UI Automation provider (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tests/uia
+        shell: pwsh
+        env:
+          SDL_VIDEO_DRIVER: windows
+        run: |
+          & 'C:\msys64\mingw64\bin\gcc.exe' -O1 -o uia-client.exe client.c -lole32 -loleaut32 -luuid -luser32
+          if ($LASTEXITCODE -ne 0) { throw "building the client failed" }
+          .\run.ps1
+
+  # Idle memory, threads and wakeups and event cost, held to budgets set
+  # against the same programs written in C on the same runner.
+  performance:
+    name: performance budgets (Linux X11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SDL's build dependencies and a display server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config xvfb \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+      - name: Install the Gossamer toolchain
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Measure against the budgets
+        env:
+          SDL_VIDEO_DRIVER: x11
+        run: xvfb-run -a tests/measure/measure.sh --gate

@@ -1,0 +1,69 @@
+// Native menus: one model for the macOS menu bar and the system tray. The
+// program owns item identities and state; a choice arrives as
+// `Event::MenuSelected`, after which the program updates its model and
+// installs it again.
+
+use std::errors
+use std::encoding::json
+use windowing_app
+use windowing_desktop
+
+use crate::support
+use crate::event::Mods
+use crate::keys::Key
+use crate::window::WindowId
+
+/// A keyboard shortcut a menu item shows and, on macOS, answers.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Shortcut {
+    pub key: Key
+    pub mods: Mods
+}
+
+/// One entry of a native menu. Identities are the program's own and must be
+/// unique within the menus installed together.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MenuEntry {
+    Action { id: u32, title: String, enabled: bool, shortcut: Option<Shortcut> }
+    /// A check item; the platform shows `checked` and leaves toggling to the program.
+    Check { id: u32, title: String, enabled: bool, checked: bool, shortcut: Option<Shortcut> }
+    /// A member of the exclusive set `group`; the program checks exactly one.
+    Radio { id: u32, title: String, enabled: bool, checked: bool, group: u32, shortcut: Option<Shortcut> }
+    Separator
+    Submenu { title: String, enabled: bool, entries: Vec<MenuEntry> }
+}
+
+/// A titled top-level menu of a menu bar.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Menu {
+    pub title: String
+    pub entries: Vec<MenuEntry>
+}
+
+/// A tray icon the application created, as `MenuSource::Tray` names it.
+pub newtype TrayId = u32
+
+/// Where a chosen menu item lives.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MenuSource {
+    /// The menu bar; `window` is the key window when the choice was made, if any.
+    MenuBar { window: Option<WindowId> }
+    Tray { tray: TrayId }
+}
+
+impl crate::App {
+    /// Installs `menus` in the macOS menu bar, replacing the program's
+    /// earlier ones; a choice arrives as `Event::MenuSelected` with
+    /// `MenuSource::MenuBar`. Other platforms have no native menu bar and
+    /// answer an error: draw the menus in the window there, as
+    /// `has_native_menu_bar` tells.
+    pub fn set_menu_bar(&self, menus: Vec<Menu>) -> Result<(), errors::Error> {
+        crate::support::require_main_thread("App::set_menu_bar")
+        support::ok(windowing_desktop::menu_set_bar(json::encode(menus)))
+    }
+}
+
+/// Whether the platform shows a native menu bar `App::set_menu_bar` fills.
+pub fn has_native_menu_bar() -> bool {
+    windowing_app::has_native_menu_bar()
+}

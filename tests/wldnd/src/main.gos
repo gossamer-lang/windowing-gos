@@ -1,0 +1,152 @@
+// Drives a real Wayland drag: XTest presses the pointer on the X server a
+// nested Weston reads its input from, and `App::start_drag` offers text from
+// this process's window. With `WLDND_TARGET` unset or empty the drop lands back on the
+// same window, which the library delivers from the drag's own items;
+// otherwise the drag starts that program with `--target` as the drop target,
+// which the kiosk shell shows on top, and it reads the data from this
+// process. `run.sh` starts the X server and the compositor.
+use std::{env, errors, ffi, process}
+use std::process::{Command, Stdio}
+use std::ffi::Ptr
+use windowing
+use windowing::{DragItem, DragOperation, Event}
+
+#[link(name = "X11")]
+unsafe extern "C" {
+    type XDisplay
+    fn XOpenDisplay(name: [u8]) -> Option<Ptr<XDisplay>>
+    fn XFlush(display: Ptr<XDisplay>) -> i32
+    fn XCloseDisplay(display: Ptr<XDisplay>) -> i32
+}
+
+#[link(name = "Xtst")]
+unsafe extern "C" {
+    fn XTestFakeMotionEvent(display: Ptr<XDisplay>, screen: i32, x: i32, y: i32, delay: u64) -> i32
+    fn XTestFakeButtonEvent(display: Ptr<XDisplay>, button: u32, press: i32, delay: u64) -> i32
+}
+
+fn motion(d: Ptr<XDisplay>, x: i32, y: i32) {
+    unsafe { XTestFakeMotionEvent(d, 0, x, y, 0) }
+    let _ = unsafe { XFlush(d) }
+}
+
+fn button(d: Ptr<XDisplay>, press: bool) {
+    unsafe { XTestFakeButtonEvent(d, 1, if press { 1 } else { 0 }, 0) }
+    let _ = unsafe { XFlush(d) }
+}
+
+fn input_display() -> Result<Ptr<XDisplay>, errors::Error> {
+    let input = env::var("WLDND_INPUT_DISPLAY").ok_or(errors::new("WLDND_INPUT_DISPLAY names the X server Weston reads input from"))?
+    let name = ffi::cstring(input).map_err(|e| errors::new(f"{e}"))?
+    unsafe { XOpenDisplay(name) }.ok_or(errors::new("no X display for input"))
+}
+
+// The drop target: it moves the held pointer over its own window once that
+// shows, releases it there, and reports what it received.
+fn target() -> Result<(), errors::Error> {
+    let app = windowing::init("Wayland drop target", driver: "wayland")?
+    defer app.finalize()
+    let w = app.window(title: "B", width: 640, height: 480)?
+    let x = input_display()?
+    defer unsafe { XCloseDisplay(x) }
+    let mut moves = 0
+    let mut dropped = ""
+    loop {
+        match app.wait()? {
+            Event::RedrawRequested { window } if window == w.id() => {
+                let frame = w.framebuffer()?
+                w.present(frame)?
+                motion(x, 320, 240)
+            }
+            Event::DropMoved { window, .. } if window == w.id() => {
+                moves += 1
+                if moves == 1 {
+                    motion(x, 330, 250)
+                } else if moves == 2 {
+                    button(x, false)
+                }
+            }
+            Event::DroppedText { window, text, .. } if window == w.id() => dropped = text
+            Event::DropEnded { window, .. } if window == w.id() => break
+            Event::QuitRequested => break
+            _ => ()
+        }
+    }
+    println(f"target dropped: {dropped}")
+    Ok(())
+}
+
+fn run() -> Result<(), errors::Error> {
+    if env::args().contains("--target") { return target() }
+    let target_program = match env::var("WLDND_TARGET") {
+        Some(p) if !p.is_empty() => Some(p)
+        _ => None
+    }
+    let app = windowing::init("Wayland drag probe", driver: "wayland")?
+    defer app.finalize()
+    println(f"outbound drag: {windowing::drag::has_outbound_drag()}")
+    let a = app.window(title: "A", width: 640, height: 480)?
+    let x = input_display()?
+    defer unsafe { XCloseDisplay(x) }
+    let mut child: Option<process::Child> = None
+    let mut pressed = false
+    let mut started = false
+    let mut moves = 0
+    let mut dropped = ""
+    let mut finished = ""
+    loop {
+        match app.wait()? {
+            // A Wayland surface shows once it has content, and the pointer
+            // reaches it only then.
+            Event::RedrawRequested { window } if window == a.id() => {
+                let frame = a.framebuffer()?
+                a.present(frame)?
+                if !pressed { motion(x, 100, 100) }
+            }
+            Event::PointerEntered { window } if window == a.id() && !pressed => {
+                pressed = true
+                button(x, true)
+            }
+            Event::ButtonDown { window, .. } if window == a.id() => motion(x, 110, 110)
+            Event::PointerMoved { window, buttons, .. } if window == a.id() && !started && buttons.left => {
+                let id = app.start_drag(a, #[DragItem { mime: "text/plain;charset=utf-8", data: "hello drag".bytes() }], DragOperation::Copy)?
+                println(f"started drag {id}")
+                started = true
+                match target_program {
+                    Some(program) => child = Some(Command::new(program).arg("--target").stdout(Stdio::Piped).spawn()?)
+                    None => motion(x, 300, 300)
+                }
+            }
+            Event::DropMoved { window, .. } if window == a.id() && started && target_program.is_none() => {
+                moves += 1
+                if moves == 1 {
+                    motion(x, 310, 310)
+                } else if moves == 2 {
+                    button(x, false)
+                }
+            }
+            Event::DroppedText { window, text, .. } if window == a.id() => dropped = text
+            Event::DragFinished { operation, .. } => {
+                finished = f"{operation}"
+                break
+            }
+            Event::QuitRequested => break
+            _ => ()
+        }
+    }
+    if let Some(c) = child {
+        let out = c.read_stdout()
+        let _ = c.wait()?
+        print(out)
+    }
+    println(f"dropped: {dropped}")
+    println(f"finished: {finished}")
+    Ok(())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln(f"wayland drag probe: {e}")
+        process::exit(1)
+    }
+}

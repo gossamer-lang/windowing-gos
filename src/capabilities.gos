@@ -1,0 +1,16 @@
+// Driver capabilities. Conditional operations still require checking their Result.
+use std::encoding::json
+use windowing_app
+
+pub enum Support { Available, Conditional, Unavailable }
+pub struct Capability { pub name: String, pub support: Support, pub detail: String }
+pub struct Capabilities { pub driver: String, pub features: Vec<Capability> }
+impl Capabilities {
+    pub fn get(self, name: String) -> Option<Capability> {
+        for feature in self.features { if feature.name == name { return Some(feature) } }
+        None
+    }
+}
+pub fn capabilities() -> Capabilities {
+    json::decode::<Capabilities>(windowing_app::capabilities()).unwrap()
+}

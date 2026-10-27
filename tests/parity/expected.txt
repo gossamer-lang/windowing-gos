@@ -1,0 +1,177 @@
+== driver
+offscreen sdl 3.4.10
+== windows
+title first size (320, 200) pixels (320, 200) scale 1
+resized (400, 300) (400, 300)
+retitled renamed
+opacity refused: setting the opacity: That operation is not supported
+hidden visible false focus false
+shown visible true
+found true after close false
+== events
+KeyDown { window: 2, key: F, scancode: F, mods: Mods { shift: false, ctrl: true, alt: false, gui: false, alt_gr: false, caps_lock: false, num_lock: false, scroll_lock: false }, repeat: false }
+KeyUp { window: 2, key: Char('['), scancode: LeftBracket, mods: Mods { shift: false, ctrl: false, alt: false, gui: false, alt_gr: false, caps_lock: false, num_lock: false, scroll_lock: false } }
+KeyDown { window: 2, key: F5, scancode: F5, mods: Mods { shift: true, ctrl: false, alt: true, gui: false, alt_gr: false, caps_lock: false, num_lock: false, scroll_lock: false }, repeat: true }
+Text { window: 2, text: "héllo, 世界" }
+Composing { window: 2, text: "かな", cursor: 1, selection: 1 }
+PointerMoved { window: 2, x: 10.5, y: 20.25, dx: 1.0, dy: -2.0, buttons: Buttons { left: true, middle: false, right: false, back: false, forward: false }, source: Mouse }
+ButtonDown { window: 2, button: Right, x: 3.0, y: 4.0, clicks: 2, source: Mouse }
+ButtonUp { window: 2, button: Back, x: 3.0, y: 4.0, clicks: 1, source: Touch }
+Wheel { window: 2, dx: 0.0, dy: -1.5, x: 50.0, y: 60.0 }
+TouchDown { window: 2, device: 7, finger: 1, x: 100.0, y: 150.0, pressure: 0.5 }
+TouchUp { window: 2, device: 7, finger: 1, x: 100.0, y: 150.0 }
+PenMoved { window: 2, pen: 3, x: 12.0, y: 13.0, state: PenState { down: true, eraser: false, primary_button: true, secondary_button: false, tertiary_button: false } }
+DropBegan { window: 2 }
+DroppedFile { window: 2, path: "/tmp/picture.png", x: 30.0, y: 40.0 }
+DroppedText { window: 2, text: "dragged text", x: 31.0, y: 41.0 }
+DropEnded { window: 2, x: 31.0, y: 41.0 }
+FocusLost { window: 2 }
+CloseRequested { window: 2 }
+QuitRequested
+RedrawRequested { window: 2 }
+== platform events
+Terminating
+LowMemory
+Suspending
+Suspended
+Resuming
+Resumed
+LocaleChanged
+KeymapChanged
+ThemeChanged { theme: Dark }
+ClipboardChanged { owned: true }
+DialogClosed { dialog: 7, choice: Chosen { paths: #["/tmp/a.png", "/tmp/b.png"], filter: Some(1) } }
+DialogClosed { dialog: 8, choice: Cancelled }
+DialogClosed { dialog: 9, choice: Failed { reason: "no portal" } }
+DisplayAdded { display: 1 }
+DisplayRemoved { display: 1 }
+DisplayMoved { display: 1 }
+DisplayModeChanged { display: 1 }
+DisplayScaleChanged { display: 1 }
+DisplayUsableBoundsChanged { display: 1 }
+DisplayOrientationChanged { display: 1, orientation: PortraitFlipped }
+WindowShown { window: 2 }
+WindowHidden { window: 2 }
+Moved { window: 2, x: 10, y: -20 }
+Resized { window: 2, width: 640, height: 480 }
+PixelSizeChanged { window: 2, width: 1280, height: 960 }
+ScaleChanged { window: 2, scale: 2.0 }
+Minimized { window: 2 }
+Maximized { window: 2 }
+Restored { window: 2 }
+PointerEntered { window: 2 }
+PointerLeft { window: 2 }
+FocusGained { window: 2 }
+DisplayChanged { window: 2, display: 1 }
+Occluded { window: 2 }
+EnteredFullscreen { window: 2 }
+LeftFullscreen { window: 2 }
+TouchMoved { window: 2, device: 7, finger: 1, x: 1.0, y: 2.0, dx: 0.5, dy: 0.25, pressure: 0.75 }
+TouchCancelled { window: 2, device: 7, finger: 1 }
+PinchBegan { window: 2 }
+Pinch { window: 2, scale: 1.25 }
+PinchEnded { window: 2 }
+PenEntered { window: 2, pen: 4 }
+PenDown { window: 2, pen: 4, x: 3.0, y: 4.0, eraser: true }
+PenButtonDown { window: 2, pen: 4, button: 2, x: 3.0, y: 4.0 }
+PenAxisChanged { window: 2, pen: 4, axis: TiltX, value: -30.5, x: 3.0, y: 4.0 }
+PenButtonUp { window: 2, pen: 4, button: 2, x: 3.0, y: 4.0 }
+PenUp { window: 2, pen: 4, x: 3.0, y: 4.0, eraser: false }
+PenLeft { window: 2, pen: 4 }
+DropMoved { window: 2, x: 5.0, y: 6.0 }
+MenuSelected { source: MenuBar { window: Some(2) }, item: 11 }
+MenuSelected { source: MenuBar { window: None }, item: 12 }
+MenuSelected { source: Tray { tray: 3 }, item: 13 }
+DragFinished { drag: 5, operation: Some(Move) }
+DragFinished { drag: 6, operation: None }
+OpenRequested { path: "/tmp/report.txt" }
+Wake
+== framebuffer
+400x300 stride 1600 format Bgrx8
+drawn 11848304819431601989 shown 11848304819431601989 same true
+stale frame refused: the frame is 400x300 but the window is now 200x100; take a new framebuffer after a resize
+after resize 200x100 first red byte 255
+set pixel 9 8 7 255 neighbour 0
+== waker
+woken with Some(42)
+three wakes queued 1 event
+== clipboard
+text "parity ✓" has true
+types #["text/plain", "application/x-parity"]
+custom Some(#[1, 2, 3])
+missing None
+cleared has false
+has data true false text false
+empty offer: an empty offer: give at least one MIME type
+primary "primary ✓" has true
+== displays
+count 1 primary first true bounds Rect { x: 0, y: 0, width: 1024, height: 768 }
+window on primary true
+by id true modes 0
+== system
+theme Unknown screensaver true
+inhibit refused: inhibiting the screensaver: That operation is not supported
+locales distinct true
+== capabilities
+native menu bar false notifications true outbound drag false
+menu bar refused: a native menu bar requires macOS; draw the menus in the window
+== cursor
+system cursor refused: creating a system cursor: CreateSystemCursor is not currently supported
+custom cursor shown
+bad image: an image of 1x1 pixels needs 4 RGBA bytes, not 3
+empty image: an image needs a positive size, not 0x0
+hide cursor: ok
+cursor visible false
+show cursor: ok
+cursor visible true
+== window state
+hit test: installing the hit test: That operation is not supported
+hit test cleared: removing the hit test: That operation is not supported
+text area: ok
+text input: ok
+text input active true
+text input stopped: ok
+text input capabilities true false true
+password input: ok
+text input active true
+text input stopped: ok
+default input: ok
+text input stopped: ok
+raw handle: the `offscreen` video driver gave this window no native handle
+icon: setting the window icon: That operation is not supported
+backdrop: a window backdrop is a Windows feature
+maximize: maximizing the window: That operation is not supported
+restore: restoring the window: That operation is not supported
+attention: requesting attention: That operation is not supported
+relative pointer: ok
+relative true
+absolute pointer: ok
+fullscreen: ok
+fullscreen true
+windowed: ok
+position (352, 284)
+move: moving the window: That operation is not supported
+resizable: ok
+bordered: ok
+on top: ok
+minimize: minimizing the window: That operation is not supported
+minimized false maximized false
+confined: ok
+capture pointer: capturing the pointer: That operation is not supported
+pointer (15.0, 25.0, Buttons { left: false, middle: false, right: false, back: false, forward: false })
+empty window: a window needs a positive size, not 0x10
+negative size: a window needs a positive size, not -1x5
+live resize hook: ok
+live resize replaced: ok
+live resize cleared: ok
+== keyboard
+key at A A names Return [ F5
+mods false A held false
+== surfaces
+gl context: creating a GL context: The specified window isn't an OpenGL window
+metal view: creating a Metal view: That operation is not supported
+vulkan surface extension listed true
+== dialogs
+question without buttons: a question needs at least one button
+default file dialog FileDialog { title: "", location: "", filters: #[], many: false, parent: None }
+== done

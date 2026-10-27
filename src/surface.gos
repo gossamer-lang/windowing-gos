@@ -1,0 +1,342 @@
+// What a program draws into: the software framebuffer, the raw native
+// handles a GPU API binds to, and the OpenGL, Vulkan, and Metal helpers.
+
+use std::{errors, ffi}
+use std::encoding::json
+use std::ffi::Ptr
+use windowing_app
+use windowing_window
+
+use crate::support
+use crate::window::{Window, WindowId}
+
+/// The byte order of a framebuffer's pixels, 4 bytes each. `x` bytes are
+/// unused padding the display ignores.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PixelFormat {
+    Bgra8
+    Rgba8
+    Bgrx8
+    Rgbx8
+}
+
+impl PixelFormat {
+    /// The byte offsets of red, green, and blue within a pixel.
+    pub fn rgb_offsets(&self) -> (i64, i64, i64) {
+        match self {
+            PixelFormat::Bgra8 | PixelFormat::Bgrx8 => (2, 1, 0)
+            PixelFormat::Rgba8 | PixelFormat::Rgbx8 => (0, 1, 2)
+        }
+    }
+}
+
+/// A frame of a window's software framebuffer: `height` rows of `stride`
+/// bytes, each holding `width` pixels in `format`. Draw into `pixels`
+/// (rows in parallel with `par_chunks_mut(stride, ..)`), then `present` it.
+/// A frame matches the window's pixel size when it was taken; after a
+/// resize or a scale change, take a new one.
+#[derive(Debug)]
+pub struct Frame {
+    pub pixels: Vec<u8>
+    pub width: i64
+    pub height: i64
+    pub stride: i64
+    pub format: PixelFormat
+    pub window: WindowId
+}
+
+impl Frame {
+    /// Sets the pixel at `x`, `y` to the colour `r`, `g`, `b`, opaque.
+    /// Panics when the point lies outside the frame.
+    pub fn set_pixel(&mut self, x: i64, y: i64, r: u8, g: u8, b: u8) {
+        if x < 0 || x >= self.width || y < 0 || y >= self.height {
+            panic(f"the pixel ({x}, {y}) lies outside a {self.width}x{self.height} frame")
+        }
+        let at = y * self.stride + x * 4
+        let ro, go, bo = self.format.rgb_offsets()
+        self.pixels[at + ro] = r
+        self.pixels[at + go] = g
+        self.pixels[at + bo] = b
+        self.pixels[at + 3] = 255
+    }
+
+    /// Fills the whole frame with one opaque colour.
+    pub fn fill(&mut self, r: u8, g: u8, b: u8) {
+        let ro, go, bo = self.format.rgb_offsets()
+        let mut pixel = [0u8, 0, 0, 255]
+        pixel[ro] = r
+        pixel[go] = g
+        pixel[bo] = b
+        let row_bytes = self.width * 4
+        for y in 0..self.height {
+            let start = y * self.stride
+            let mut at = start
+            while at < start + row_bytes {
+                self.pixels[at] = pixel[0]
+                self.pixels[at + 1] = pixel[1]
+                self.pixels[at + 2] = pixel[2]
+                self.pixels[at + 3] = pixel[3]
+                at += 4
+            }
+        }
+    }
+}
+
+/// The native window a GPU API binds to, shaped like Rust's
+/// `raw-window-handle` so bindings map one to one.
+#[derive(Debug)]
+pub enum RawHandle {
+    Win32 { hwnd: Ptr<ffi::c_void>, hinstance: Option<Ptr<ffi::c_void>> }
+    /// `ns_view` is the window's content view, where a `CAMetalLayer` goes.
+    AppKit { ns_window: Ptr<ffi::c_void>, ns_view: Option<Ptr<ffi::c_void>> }
+    Wayland { display: Ptr<ffi::c_void>, surface: Ptr<ffi::c_void> }
+    Xlib { display: Ptr<ffi::c_void>, window: u64, screen: i64 }
+    /// A kiosk-style display without a window system (KMS/DRM).
+    Drm { fd: i64, gbm_device: Option<Ptr<ffi::c_void>> }
+}
+
+/// The OpenGL flavour a context speaks.
+#[derive(Debug, PartialEq, Eq)]
+pub enum GlProfile {
+    Core
+    Compatibility
+    /// OpenGL ES.
+    Es
+}
+
+/// What an OpenGL context is created with: by default a 3.3 core
+/// profile with a 24-bit depth and an 8-bit stencil buffer.
+#[derive(Debug)]
+pub struct GlOptions {
+    pub major: i64
+    pub minor: i64
+    pub profile: GlProfile
+    pub depth_bits: i64
+    pub stencil_bits: i64
+    /// Samples per pixel for multisampling; 0 for none.
+    pub samples: i64
+    /// An sRGB-capable default framebuffer.
+    pub srgb: bool
+    /// A debug context, which reports through `KHR_debug`.
+    pub debug: bool
+}
+
+impl Default for GlOptions {
+    fn default() -> GlOptions {
+        GlOptions {
+            major: 3
+            minor: 3
+            profile: GlProfile::Core
+            depth_bits: 24
+            stencil_bits: 8
+            samples: 0
+            srgb: false
+            debug: false
+        }
+    }
+}
+
+/// An OpenGL context for one window.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct GlContext {
+    handle: i64
+}
+
+impl GlContext {
+    pub fn make_current(&self) -> Result<(), errors::Error> {
+        support::ok(windowing_window::gl_act(self.handle, "make-current"))
+    }
+
+    pub fn swap(&self) -> Result<(), errors::Error> {
+        support::ok(windowing_window::gl_act(self.handle, "swap"))
+    }
+
+    pub fn set_swap_interval(&self, interval: i64) -> Result<(), errors::Error> {
+        support::ok(windowing_window::gl_set_swap_interval(self.handle, interval))
+    }
+
+    /// The address of the GL function `name`, for a GL binding.
+    pub fn proc_address(&self, name: String) -> Option<Ptr<ffi::c_void>> {
+        let address = support::ok(windowing_window::gl_proc_address(self.handle, name)).ok()?
+        unsafe { Ptr::<ffi::c_void>::from_address(address as u64) }
+    }
+
+    pub fn destroy(&self) -> Result<(), errors::Error> {
+        support::ok(windowing_window::gl_act(self.handle, "destroy"))
+    }
+}
+
+/// A Metal view and the `CAMetalLayer` a renderer draws to.
+#[derive(Debug)]
+pub struct MetalView {
+    pub view: Ptr<ffi::c_void>
+    pub layer: Ptr<ffi::c_void>
+}
+
+impl MetalView {
+    pub fn destroy(&self) {
+        windowing_window::metal_view_destroy(self.view.address() as i64)
+    }
+}
+
+// The surface's layout as the core reports it.
+struct FrameInfo {
+    width: i64
+    height: i64
+    stride: i64
+    format: PixelFormat
+}
+
+// The native handles as the core encodes them: addresses as integers.
+enum RawHandleWire {
+    Win32 { hwnd: u64, hinstance: u64 }
+    AppKit { ns_window: u64, ns_view: u64 }
+    Wayland { display: u64, surface: u64 }
+    Xlib { display: u64, window: u64, screen: i64 }
+    Drm { fd: i64, gbm_device: u64 }
+}
+
+// Two addresses the core encodes as `[a, b]`.
+struct Addresses {
+    v: (i64, i64)
+}
+
+fn pointer(address: u64) -> Option<Ptr<ffi::c_void>> {
+    unsafe { Ptr::<ffi::c_void>::from_address(address) }
+}
+
+fn required(address: u64, what: String) -> Result<Ptr<ffi::c_void>, errors::Error> {
+    pointer(address).ok_or(errors::new(f"the window has no {what}"))
+}
+
+impl Window {
+    /// A zeroed frame matching the window's surface: draw into it, then
+    /// `present` it. Take a new one after the window's pixel size changes.
+    pub fn framebuffer(&self) -> Result<Frame, errors::Error> {
+        support::require_main_thread("Window::framebuffer")
+        let raw: u32 = self.id.into()
+        let text = support::ok(windowing_window::window_frame_info(raw as i64))?
+        let info = json::decode::<FrameInfo>(text).map_err(|e| errors::wrap(e, "reading the window surface"))?
+        Ok(Frame {
+            pixels: #[0u8; info.stride * info.height]
+            width: info.width
+            height: info.height
+            stride: info.stride
+            format: info.format
+            window: self.id
+        })
+    }
+
+    /// Shows `frame` in the window: one copy into the surface the window
+    /// system displays.
+    pub fn present(&self, frame: Frame) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::present")
+        let raw: u32 = self.id.into()
+        support::ok(windowing_window::window_present(raw as i64, frame.pixels, frame.width, frame.height, frame.stride))
+    }
+
+    /// What the window shows now: a copy of its software surface as a frame,
+    /// for screenshots and for checking a rendering in tests.
+    pub fn capture(&self) -> Result<Frame, errors::Error> {
+        support::require_main_thread("Window::capture")
+        let mut frame = self.framebuffer()?
+        let raw: u32 = self.id.into()
+        frame.pixels = support::ok(windowing_window::window_capture(raw as i64))?
+        Ok(frame)
+    }
+
+    /// The native window, for a GPU API binding.
+    pub fn raw_handle(&self) -> Result<RawHandle, errors::Error> {
+        support::require_main_thread("Window::raw_handle")
+        let raw: u32 = self.id.into()
+        let text = support::ok(windowing_window::window_raw_handle(raw as i64))?
+        let wire = json::decode::<RawHandleWire>(text).map_err(|e| errors::wrap(e, "reading the native handle"))?
+        match wire {
+            RawHandleWire::Win32 { hwnd, hinstance } => Ok(RawHandle::Win32 { hwnd: required(hwnd, "HWND")?, hinstance: pointer(hinstance) })
+            RawHandleWire::AppKit { ns_window, ns_view } => Ok(RawHandle::AppKit { ns_window: required(ns_window, "NSWindow")?, ns_view: pointer(ns_view) })
+            RawHandleWire::Wayland { display, surface } => Ok(RawHandle::Wayland { display: required(display, "Wayland display")?, surface: required(surface, "Wayland surface")? })
+            RawHandleWire::Xlib { display, window, screen } => Ok(RawHandle::Xlib { display: required(display, "X11 display")?, window: window, screen: screen })
+            RawHandleWire::Drm { fd, gbm_device } => Ok(RawHandle::Drm { fd: fd, gbm_device: pointer(gbm_device) })
+        }
+    }
+
+    /// An OpenGL context for a window created with `Graphics::OpenGl`.
+    pub fn gl_context(&self, options: GlOptions) -> Result<GlContext, errors::Error> {
+        support::require_main_thread("Window::gl_context")
+        let raw: u32 = self.id.into()
+        Ok(GlContext { handle: support::ok(windowing_window::window_gl_context(raw as i64, json::encode(options)))? })
+    }
+
+    /// A Vulkan surface for `instance` (a `VkInstance`), as its raw handle.
+    pub fn vulkan_surface(&self, instance: Ptr<ffi::c_void>) -> Result<u64, errors::Error> {
+        support::require_main_thread("Window::vulkan_surface")
+        let raw: u32 = self.id.into()
+        let surface = support::ok(windowing_window::window_vulkan_surface(raw as i64, instance.address() as i64))?
+        Ok(surface as u64)
+    }
+
+    /// A Metal view and layer for a window created with `Graphics::Metal`.
+    pub fn metal_view(&self) -> Result<MetalView, errors::Error> {
+        support::require_main_thread("Window::metal_view")
+        let raw: u32 = self.id.into()
+        let text = support::ok(windowing_window::window_metal_view(raw as i64))?
+        let pair = json::decode::<Addresses>(f"{{\"v\":{text}}}").map_err(|e| errors::wrap(e, "reading the Metal view"))?
+        let view, layer = pair.v
+        Ok(MetalView { view: required(view as u64, "Metal view")?, layer: required(layer as u64, "Metal layer")? })
+    }
+}
+
+/// The Vulkan instance extensions a window surface needs.
+pub fn vulkan_instance_extensions() -> Result<Vec<String>, errors::Error> {
+    support::require_main_thread("windowing::vulkan_instance_extensions")
+    let text = support::ok(windowing_app::vulkan_instance_extensions())?
+    json::decode::<ExtensionList>(f"{{\"items\":{text}}}").map(|l| l.items).map_err(|e| errors::wrap(e, "reading the extension list"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Frame, PixelFormat}
+
+    // A 3x2 frame whose rows carry 4 bytes of padding past their pixels.
+    fn padded(order: PixelFormat) -> Frame {
+        Frame { pixels: #[0u8; 32], width: 3, height: 2, stride: 16, format: order, window: 2u32.into() }
+    }
+
+    #[test]
+    fn fill_paints_every_pixel_and_leaves_row_padding_alone() {
+        let mut frame = padded(PixelFormat::Bgrx8)
+        frame.fill(10, 20, 30)
+        for y in 0..2 {
+            let row = y * 16
+            for x in 0..3 {
+                let at = row + x * 4
+                assert_eq(frame.pixels[at..at + 4], #[30u8, 20, 10, 255])
+            }
+            assert_eq(frame.pixels[row + 12..row + 16], #[0u8, 0, 0, 0])
+        }
+    }
+
+    #[test]
+    fn set_pixel_writes_one_pixel_in_the_frame_byte_order() {
+        let mut frame = padded(PixelFormat::Rgba8)
+        frame.set_pixel(2, 1, 1, 2, 3)
+        let at = 16 + 2 * 4
+        assert_eq(frame.pixels[at..at + 4], #[1u8, 2, 3, 255])
+        let touched = frame.pixels.iter().filter(|b| b != 0u8).count()
+        assert_eq(touched, 4)
+    }
+
+    #[test]
+    fn rgb_offsets_follow_the_format_byte_order() {
+        assert_eq(PixelFormat::Bgra8.rgb_offsets(), (2, 1, 0))
+        assert_eq(PixelFormat::Bgrx8.rgb_offsets(), (2, 1, 0))
+        assert_eq(PixelFormat::Rgba8.rgb_offsets(), (0, 1, 2))
+        assert_eq(PixelFormat::Rgbx8.rgb_offsets(), (0, 1, 2))
+    }
+}
+
+// A list the core encodes, read through a one-field wrapper: typed decoding
+// names a concrete struct.
+struct ExtensionList {
+    items: Vec<String>
+}

@@ -1,0 +1,72 @@
+// System tray icons (the notification area on Windows, status items on
+// macOS, StatusNotifierItem through libayatana-appindicator on Linux) with a
+// native menu. A chosen item arrives as `Event::MenuSelected` with
+// `MenuSource::Tray`.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::App
+use crate::menu::{MenuEntry, TrayId}
+use crate::support
+
+/// A tray icon's picture: `width` x `height` RGBA pixels, 4 bytes each.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TrayIcon {
+    pub rgba: Vec<u8>
+    pub width: i64
+    pub height: i64
+}
+
+/// A tray icon the application created.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Tray {
+    handle: i64
+    id: TrayId
+}
+
+impl App {
+    /// Adds an icon to the system tray, with `tooltip` on hover. Its menu
+    /// comes from `Tray::set_menu`.
+    pub fn tray(&self, icon: Option<TrayIcon>, tooltip: String) -> Result<Tray, errors::Error> {
+        support::require_main_thread("App::tray")
+        let encoded = match icon {
+            Some(picture) => json::encode(picture)
+            None => "null"
+        }
+        let handle = support::ok(windowing_desktop::tray_create(encoded, tooltip))?
+        let id = support::ok(windowing_desktop::tray_id(handle))?
+        Ok(Tray { handle: handle, id: (id as u32).into() })
+    }
+}
+
+impl Tray {
+    /// The identity `MenuSource::Tray` names this tray by.
+    pub fn id(&self) -> TrayId {
+        self.id
+    }
+
+    pub fn set_icon(&self, icon: TrayIcon) -> Result<(), errors::Error> {
+        support::require_main_thread("Tray::set_icon")
+        support::ok(windowing_desktop::tray_set_icon(self.handle, json::encode(icon)))
+    }
+
+    pub fn set_tooltip(&self, tooltip: String) -> Result<(), errors::Error> {
+        support::require_main_thread("Tray::set_tooltip")
+        support::ok(windowing_desktop::tray_set_tooltip(self.handle, tooltip))
+    }
+
+    /// Replaces the tray's menu with `entries`; a choice arrives as
+    /// `Event::MenuSelected`.
+    pub fn set_menu(&self, entries: Vec<MenuEntry>) -> Result<(), errors::Error> {
+        support::require_main_thread("Tray::set_menu")
+        support::ok(windowing_desktop::tray_set_menu(self.handle, json::encode(entries)))
+    }
+
+    /// Removes the icon from the tray.
+    pub fn close(&self) {
+        support::require_main_thread("Tray::close")
+        let _ = support::ok(windowing_desktop::tray_close(self.handle))
+    }
+}
