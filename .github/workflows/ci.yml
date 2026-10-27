@@ -11,6 +11,8 @@ permissions:
 
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
+  # The toolchain release CI installs: the one this library requires.
+  GOSSAMER_VERSION: v0.75.3
   # The video driver for every job that needs no display: SDL's
   # `offscreen` driver keeps windows in memory.
   SDL_VIDEO_DRIVER: offscreen
@@ -42,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
       - name: Install the Gossamer toolchain
         run: |
@@ -91,7 +93,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config xvfb weston \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
       - name: Install the Gossamer toolchain (Linux, macOS)
         if: runner.os != 'Windows'
@@ -116,7 +118,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          gh release download $env:GOSSAMER_VERSION --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
           Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
           $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
           Add-Content $env:GITHUB_PATH $bin
@@ -189,8 +191,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config xvfb dbus \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
-            wayland-protocols libegl-dev libgl-dev libdecor-0-dev libxtst-dev
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
       - name: Install the Gossamer toolchain (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
@@ -212,7 +214,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release download --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          gh release download $env:GOSSAMER_VERSION --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
           Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
           $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
           Add-Content $env:GITHUB_PATH $bin
@@ -294,7 +296,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build pkg-config xvfb \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
-            libxss-dev libxfixes-dev libxkbcommon-dev libwayland-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
       - name: Install the Gossamer toolchain
         run: |

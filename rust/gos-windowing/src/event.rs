@@ -25,6 +25,7 @@ use sdl3_sys::video::{
 use crate::dialog::{DialogChoice, DialogId};
 use crate::display::{DisplayId, Orientation, orientation_from};
 use crate::drag::{DragId, DragOperation};
+use crate::instance::native_path;
 use crate::keys::{Key, Scancode};
 use crate::menu::{MenuSource, TrayId};
 use crate::support;
@@ -981,12 +982,14 @@ fn decode_drop(e: &SDL_DropEvent) -> Option<Event> {
         SDL_EVENT_DROP_POSITION => Some(Event::DropMoved { window, x, y }),
         // A file with no window is one the system asked the application to
         // open (macOS Finder, "Open With", a document dropped on the Dock icon).
+        // SDL reports a file dropped as `text/uri-list` in URI form
+        // (`/C:/x` on Windows) and one from a native file list as is.
         SDL_EVENT_DROP_FILE if e.windowID.0 == 0 => Some(Event::OpenRequested {
-            path: support::read_text(e.data),
+            path: native_path(&support::read_text(e.data)),
         }),
         SDL_EVENT_DROP_FILE => Some(Event::DroppedFile {
             window,
-            path: support::read_text(e.data),
+            path: native_path(&support::read_text(e.data)),
             x,
             y,
         }),

@@ -59,7 +59,7 @@ the X11 and Wayland development headers first:
 
 ```sh
 sudo apt-get install cmake ninja-build libx11-dev libxext-dev libxrandr-dev \
-  libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxkbcommon-dev \
+  libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev \
   libwayland-dev wayland-protocols libegl-dev libdecor-0-dev
 ```
 

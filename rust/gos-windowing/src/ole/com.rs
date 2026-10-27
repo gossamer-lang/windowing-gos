@@ -33,7 +33,7 @@ use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
 use windows::core::{BOOL, HRESULT, PCWSTR, Ref, implement};
 
 use crate::drag::{DragId, DragItem, DragOperation, operation_code};
-use crate::instance::path_unescape;
+use crate::instance::uri_path;
 use crate::{Error, Result};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -180,23 +180,6 @@ fn wide_bytes(text: &str) -> Vec<u8> {
         .collect()
 }
 
-/// The Windows path a `file://` URI names, or `None` for any other URI.
-pub(crate) fn windows_path(uri: &str) -> Option<String> {
-    let rest = uri.strip_prefix("file://")?;
-    let unescaped = rest
-        .split('/')
-        .map(path_unescape)
-        .collect::<Vec<_>>()
-        .join("\\");
-    if let Some(drive) = unescaped.strip_prefix('\\') {
-        return (drive.as_bytes().get(1) == Some(&b':')).then(|| drive.to_string());
-    }
-    if let Some(local) = rest.strip_prefix("localhost/") {
-        return windows_path(&format!("file:///{local}"));
-    }
-    Some(format!("\\\\{unescaped}"))
-}
-
 // `DROPFILES` with wide names, followed by each path, NUL-terminated, and a
 // closing NUL.
 fn hdrop(paths: &[String]) -> Vec<u8> {
@@ -276,7 +259,7 @@ fn renderings(items: &[DragItem]) -> Vec<Rendering> {
                 .map(str::trim)
                 .filter(|l| !l.is_empty() && !l.starts_with('#'))
                 .collect();
-            let paths: Vec<String> = uris.iter().filter_map(|u| windows_path(u)).collect();
+            let paths: Vec<String> = uris.iter().filter_map(|u| uri_path(u)).collect();
             if !paths.is_empty() && paths.len() == uris.len() {
                 add(&mut out, CF_HDROP.0, hdrop(&paths));
             }
@@ -353,22 +336,4 @@ fn run_drag(items: &[DragItem], operation: DragOperation) -> Result<(u64, Option
             None
         },
     ))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_uris_become_windows_paths() {
-        assert_eq!(
-            windows_path("file:///C:/a%20b/c.txt").as_deref(),
-            Some("C:\\a b\\c.txt")
-        );
-        assert_eq!(
-            windows_path("file://server/share/x").as_deref(),
-            Some("\\\\server\\share\\x")
-        );
-        assert_eq!(windows_path("https://x"), None);
-    }
 }

@@ -114,8 +114,8 @@ mod uri_tests {
     fn check_platform_paths() { assert_eq(uri_path("file://server/share"), None) }
     #[cfg(target_os = "windows")]
     fn check_platform_paths() {
-        assert_eq(uri_path(file_uri("C:\\a b.txt")), Some("C:/a b.txt"))
-        assert_eq(uri_path(file_uri("\\\\server\\share")), Some("//server/share"))
+        assert_eq(uri_path(file_uri("C:\\a b.txt")), Some("C:\\a b.txt"))
+        assert_eq(uri_path(file_uri("\\\\server\\share")), Some("\\\\server\\share"))
     }
 }
 

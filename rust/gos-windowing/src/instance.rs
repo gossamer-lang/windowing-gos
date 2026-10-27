@@ -164,14 +164,14 @@ pub fn uri_path(uri: &str) -> Option<String> {
             && !server.is_empty()
             && !server.contains([':', '@'])
         {
-            return Some(format!(
+            return Some(native_path(&format!(
                 "//{}/{}",
                 path_unescape(server),
                 path.split('/')
                     .map(path_unescape)
                     .collect::<Vec<_>>()
                     .join("/")
-            ));
+            )));
         }
         return None;
     }
@@ -180,16 +180,23 @@ pub fn uri_path(uri: &str) -> Option<String> {
         .map(path_unescape)
         .collect::<Vec<_>>()
         .join("/");
+    Some(native_path(&decoded))
+}
+
+/// `path`, a decoded `file://` path such as `/C:/a/b`, in the platform's own
+/// form: on Windows the drive leads and `\` separates (`C:\a\b`).
+pub(crate) fn native_path(path: &str) -> String {
     #[cfg(target_os = "windows")]
-    if decoded.as_bytes().get(2) == Some(&b':')
-        && decoded
-            .as_bytes()
-            .get(1)
-            .is_some_and(u8::is_ascii_alphabetic)
     {
-        return Some(decoded[1..].into());
+        let bytes = path.as_bytes();
+        let drive = bytes.first() == Some(&b'/')
+            && bytes.get(1).is_some_and(u8::is_ascii_alphabetic)
+            && bytes.get(2) == Some(&b':');
+        let path = if drive { &path[1..] } else { path };
+        path.replace('/', "\\")
     }
-    Some(decoded)
+    #[cfg(not(target_os = "windows"))]
+    path.to_string()
 }
 
 #[cfg(target_os = "linux")]
@@ -574,12 +581,16 @@ mod tests {
         #[cfg(target_os = "windows")]
         {
             assert_eq!(
-                uri_path("file://server/share").as_deref(),
-                Some("//server/share")
+                uri_path("file://server/share/x").as_deref(),
+                Some(r"\\server\share\x")
             );
             assert_eq!(
-                uri_path(&file_uri(r"C:\a b.txt")).as_deref(),
-                Some("C:/a b.txt")
+                uri_path(&file_uri(r"C:\a b\c.txt")).as_deref(),
+                Some(r"C:\a b\c.txt")
+            );
+            assert_eq!(
+                uri_path("file://localhost/C:/a%20b").as_deref(),
+                Some(r"C:\a b")
             );
         }
     }
