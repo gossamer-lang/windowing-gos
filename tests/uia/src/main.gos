@@ -119,26 +119,37 @@ fn run() -> Result<(), errors::Error> {
         return self_check(win)
     }
     println("probe ready")
-    let mut handled = 0
+    let mut applied = 0
     loop {
         match app.wait()? {
             Event::Wake => {
                 for r in access::take_requests() {
                     println(f"request: {r.id} {r.action} {r.value}")
                     match r.action {
-                        "press" if r.id == 3 => checked = 1 - checked
-                        "set-text" if r.id == 4 => name = r.value
-                        "set-value" if r.id == 5 => volume = r.value.to_f64().unwrap_or(volume)
-                        "focus" if r.id == 2 => {
+                        "press" if r.id == 2 => applied += 1
+                        "press" if r.id == 3 => {
+                            checked = 1 - checked
+                            applied += 1
+                        }
+                        "set-text" if r.id == 4 => {
+                            name = r.value
+                            applied += 1
+                        }
+                        "set-value" if r.id == 5 => {
+                            volume = r.value.to_f64().unwrap_or(volume)
+                            applied += 1
+                        }
+                        // UI Automation may move focus to a control as it acts on
+                        // it, so only a focus after the four actions ends the probe.
+                        "focus" if r.id == 2 && applied >= 4 => {
                             println("focus returned")
                             return Ok(())
                         }
                         _ => ()
                     }
-                    handled += 1
                 }
                 access::update(win, tree(checked, name, volume))?
-                if handled >= 4 {
+                if applied >= 4 {
                     println("updated")
                 }
             }

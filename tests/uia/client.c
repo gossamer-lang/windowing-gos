@@ -52,6 +52,11 @@ static void *pattern(IUIAutomationElement *e, PATTERNID id, REFIID iid) {
     return p;
 }
 
+static void report(const char *what, HRESULT hr) {
+    if (SUCCEEDED(hr)) printf("%s: ok\n", what);
+    else printf("%s: failed (0x%08lx)\n", what, (unsigned long)hr);
+}
+
 static void read_state(IUIAutomationElement *root, const char *phase) {
     enum ToggleState t = 0;
     BSTR value = NULL;
@@ -119,17 +124,18 @@ int main(int argc, char **argv) {
     printf("save has focus: %d\n", focus ? 1 : 0);
     read_state(root, "before");
     IUIAutomationInvokePattern *invoke = pattern(child(root, "Save"), UIA_InvokePatternId, &IID_IUIAutomationInvokePattern);
-    printf("invoke: %s\n", invoke && SUCCEEDED(IUIAutomationInvokePattern_Invoke(invoke)) ? "ok" : "failed");
+    report("invoke", invoke ? IUIAutomationInvokePattern_Invoke(invoke) : E_NOINTERFACE);
     IUIAutomationTogglePattern *toggle = pattern(child(root, "Wrap lines"), UIA_TogglePatternId, &IID_IUIAutomationTogglePattern);
-    printf("toggle: %s\n", toggle && SUCCEEDED(IUIAutomationTogglePattern_Toggle(toggle)) ? "ok" : "failed");
+    report("toggle", toggle ? IUIAutomationTogglePattern_Toggle(toggle) : E_NOINTERFACE);
     IUIAutomationValuePattern *val = pattern(child(root, "Name"), UIA_ValuePatternId, &IID_IUIAutomationValuePattern);
-    printf("set value: %s\n", val && SUCCEEDED(IUIAutomationValuePattern_SetValue(val, L"Grace")) ? "ok" : "failed");
+    report("set value", val ? IUIAutomationValuePattern_SetValue(val, L"Grace") : E_NOINTERFACE);
     IUIAutomationRangeValuePattern *range = pattern(child(root, "Volume"), UIA_RangeValuePatternId, &IID_IUIAutomationRangeValuePattern);
-    printf("set range: %s\n", range && SUCCEEDED(IUIAutomationRangeValuePattern_SetValue(range, 70.0)) ? "ok" : "failed");
+    report("set range", range ? IUIAutomationRangeValuePattern_SetValue(range, 70.0) : E_NOINTERFACE);
     fflush(stdout);
     if (!fgets(line, sizeof line, stdin)) return 1;
     read_state(root, "after");
-    printf("set focus: %s\n", SUCCEEDED(IUIAutomationElement_SetFocus(child(root, "Save"))) ? "ok" : "failed");
+    IUIAutomationElement *save = child(root, "Save");
+    report("set focus", save ? IUIAutomationElement_SetFocus(save) : E_NOINTERFACE);
     fflush(stdout);
     return 0;
 }
