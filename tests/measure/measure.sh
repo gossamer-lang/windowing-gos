@@ -12,6 +12,7 @@
 # on any hardware: the idle software window at most 32 MiB, 2 threads and
 # one wakeup a second; the GL window within 25% (plus 8 MiB) of C's memory;
 # native events at most 4 times C's cost and JIT events at most 20 times.
+# Each gated throughput is the fastest of several runs taken in turn with C's.
 set -euo pipefail
 cd "$(dirname "$0")"
 GOS=${GOS:-gos}
@@ -96,10 +97,19 @@ echo "| Tier | ns/event |"
 echo "|---|---|"
 per_event() { "$@" | awk '{print $NF}'; }
 export SDL_VIDEO_DRIVER=offscreen
+# A busy machine slows a run and never speeds one up, so a program's fastest
+# run is its cost; taking the runs in turn gives each the same machine.
+rounds=5
+fastest() {
+    if [ -z "$1" ] || [ "$2" -lt "$1" ]; then echo "$2"; else echo "$1"; fi
+}
 vm=$(GOS_RUN_ENGINE=vm GOS_JIT=0 per_event "$GOS" run . throughput $events)
-jit=$(GOS_RUN_ENGINE=vm per_event "$GOS" run . throughput $events)
-native=$(per_event "$gos_bin" throughput $events)
-c=$(per_event "$out/throughput" $events)
+jit= native= c=
+for _ in $(seq "$rounds"); do
+    jit=$(fastest "$jit" "$(GOS_RUN_ENGINE=vm per_event "$GOS" run . throughput $events)")
+    native=$(fastest "$native" "$(per_event "$gos_bin" throughput $events)")
+    c=$(fastest "$c" "$(per_event "$out/throughput" $events)")
+done
 echo "| bytecode VM | $vm |"
 echo "| JIT | $jit |"
 echo "| native (release) | $native |"
