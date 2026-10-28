@@ -1,6 +1,7 @@
 # A stand-in for the XDG desktop portal's Settings interface: it answers the
 # appearance and GNOME keys, and on a "change" line on standard input switches
-# to high contrast with no animations and announces it.
+# to high contrast with no animations and a larger interface font, and
+# announces it.
 import sys
 from gi.repository import Gio, GLib
 
@@ -12,6 +13,7 @@ values = {
     ("org.freedesktop.appearance", "accent-color"): GLib.Variant("(ddd)", (0.2, 0.4, 1.0)),
     ("org.gnome.desktop.interface", "enable-animations"): GLib.Variant("b", True),
     ("org.gnome.desktop.interface", "text-scaling-factor"): GLib.Variant("d", 1.25),
+    ("org.gnome.desktop.interface", "font-name"): GLib.Variant("s", "Cantarell 11"),
 }
 connection = None
 
@@ -43,6 +45,7 @@ def line(source, condition):
         changed = {
             ("org.freedesktop.appearance", "contrast"): GLib.Variant("u", 1),
             ("org.gnome.desktop.interface", "enable-animations"): GLib.Variant("b", False),
+            ("org.gnome.desktop.interface", "font-name"): GLib.Variant("s", "Cantarell Bold 13"),
         }
         values.update(changed)
         for (namespace, key), value in changed.items():

@@ -12,7 +12,7 @@ use objc2::{AllocAnyThread, MainThreadMarker, MainThreadOnly, define_class, msg_
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSApplication, NSColor, NSColorSpace, NSDragOperation,
     NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent,
-    NSEventModifierFlags, NSEventType, NSImage, NSMenu, NSMenuItem, NSPasteboardItem,
+    NSEventModifierFlags, NSEventType, NSFont, NSImage, NSMenu, NSMenuItem, NSPasteboardItem,
     NSPasteboardWriting, NSView, NSWindow, NSWindowTabbingMode, NSWorkspace,
 };
 use objc2_foundation::{
@@ -369,6 +369,7 @@ pub(crate) fn preferences() -> crate::system::Preferences {
         reduced_motion: Some(workspace.accessibilityDisplayShouldReduceMotion()),
         accent: accent(),
         text_scale: None,
+        menu_font_size: Some(NSFont::menuFontOfSize(0.0).pointSize()),
     }
 }
 

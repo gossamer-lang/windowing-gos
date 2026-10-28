@@ -26,8 +26,8 @@ if [ "${1:-}" = --private ]; then
 fi
 "$GOS" build . > /dev/null
 "$GOS" build --release . > /dev/null
-first='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: Some(1.25) }'
-second='second: Preferences { high_contrast: Some(true), reduced_motion: Some(true), accent: Some((51, 102, 255)), text_scale: Some(1.25) }'
+first='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: Some(1.25), menu_font_size: Some(11.0) }'
+second='second: Preferences { high_contrast: Some(true), reduced_motion: Some(true), accent: Some((51, 102, 255)), text_scale: Some(1.25), menu_font_size: Some(13.0) }'
 status=0
 check() {
     label=$1
@@ -52,8 +52,8 @@ if [ -z "$DISPLAY" ] || ! command -v Xephyr > /dev/null; then
     echo "  skip  x11: needs Xephyr and a display to nest it in"
     exit $status
 fi
-folded='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: None }'
-kept='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: Some(1.25) }'
+folded='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: None, menu_font_size: Some(11.0) }'
+kept='first: Preferences { high_contrast: None, reduced_motion: Some(false), accent: Some((51, 102, 255)), text_scale: Some(1.25), menu_font_size: Some(11.0) }'
 screen=:95
 Xephyr $screen -screen 320x240 -ac -noreset > /dev/null 2>&1 &
 xephyr=$!

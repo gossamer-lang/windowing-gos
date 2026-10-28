@@ -140,6 +140,22 @@ pub struct Preferences {
     /// The factor the desktop scales text by beyond the display's content
     /// scale, 1.0 at the normal size.
     pub text_scale: Option<f64>,
+    /// The size in points of the font the desktop draws its menus in.
+    pub menu_font_size: Option<f64>,
+}
+
+/// The point size a Pango font description ends with (`Cantarell 11`,
+/// `Noto Sans Bold 10.5`), as GNOME stores its interface font.
+pub fn pango_font_points(description: &str) -> Option<f64> {
+    let size: f64 = description.split_whitespace().last()?.parse().ok()?;
+    (size > 0.0).then_some(size)
+}
+
+/// The point size of a Qt font string (`Noto Sans,10,-1,5,50,0,0,0,0,0`),
+/// its second field, as KDE stores its menu font.
+pub fn qt_font_points(description: &str) -> Option<f64> {
+    let size: f64 = description.split(',').nth(1)?.trim().parse().ok()?;
+    (size > 0.0).then_some(size)
 }
 
 // The event type `Event::PreferencesChanged` arrives as, set by `init`; 0 before.
@@ -192,10 +208,11 @@ mod prefs {
     const DESTINATION: &str = "org.freedesktop.portal.Desktop";
     const PATH: &str = "/org/freedesktop/portal/desktop";
     const INTERFACE: &str = "org.freedesktop.portal.Settings";
-    const WATCHED: [&str; 3] = [
+    const WATCHED: [&str; 4] = [
         "org.freedesktop.appearance",
         "org.gnome.desktop.interface",
         "org.gnome.desktop.a11y.interface",
+        "org.kde.kdeglobals.General",
     ];
 
     struct Watch {
@@ -313,11 +330,21 @@ mod prefs {
         )
         .and_then(|v| f64::try_from(v).ok())
         .filter(|f| *f > 0.0 && !super::x11_scale::holds_text_scale());
+        let text = |namespace: &str, key: &str| {
+            setting(&connection, namespace, key).and_then(|v| String::try_from(v).ok())
+        };
+        let menu_font_size = text("org.gnome.desktop.interface", "font-name")
+            .and_then(|name| super::pango_font_points(&name))
+            .or_else(|| {
+                text("org.kde.kdeglobals.General", "menuFont")
+                    .and_then(|font| super::qt_font_points(&font))
+            });
         Preferences {
             high_contrast,
             reduced_motion,
             accent,
             text_scale,
+            menu_font_size,
         }
     }
 
@@ -637,9 +664,11 @@ mod prefs {
     use windows_sys::Win32::Graphics::Dwm::DwmGetColorizationColor;
     use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
     use windows_sys::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+    use windows_sys::Win32::UI::HiDpi::SystemParametersInfoForDpi;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST, SystemParametersInfoW,
-        WM_DWMCOLORIZATIONCOLORCHANGED, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED,
+        NONCLIENTMETRICSW, SPI_GETCLIENTAREAANIMATION, SPI_GETHIGHCONTRAST,
+        SPI_GETNONCLIENTMETRICS, SystemParametersInfoW, WM_DWMCOLORIZATIONCOLORCHANGED,
+        WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED,
     };
 
     use super::{Preferences, changed};
@@ -711,7 +740,27 @@ mod prefs {
             reduced_motion,
             accent,
             text_scale,
+            menu_font_size: menu_font_size(),
         }
+    }
+
+    // The menu font's height at 96 DPI, where a point is 96/72 pixels.
+    fn menu_font_size() -> Option<f64> {
+        // SAFETY: NONCLIENTMETRICSW is plain data; all zeroes is a valid value.
+        let mut metrics: NONCLIENTMETRICSW = unsafe { std::mem::zeroed() };
+        metrics.cbSize = std::mem::size_of::<NONCLIENTMETRICSW>() as u32;
+        // SAFETY: metrics is valid storage of the size given.
+        let read = unsafe {
+            SystemParametersInfoForDpi(
+                SPI_GETNONCLIENTMETRICS,
+                metrics.cbSize,
+                (&mut metrics as *mut NONCLIENTMETRICSW).cast(),
+                0,
+                96,
+            )
+        };
+        let height = metrics.lfMenuFont.lfHeight.unsigned_abs();
+        (read != 0 && height > 0).then(|| f64::from(height) * 72.0 / 96.0)
     }
 
     unsafe extern "C" fn on_message(_userdata: *mut c_void, message: *mut MSG) -> bool {
@@ -768,4 +817,19 @@ mod prefs {
     pub(super) fn watch() {}
 
     pub(super) fn stop() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pango_font_points, qt_font_points};
+
+    #[test]
+    fn desktop_font_descriptions_give_their_point_size() {
+        assert_eq!(pango_font_points("Cantarell 11"), Some(11.0));
+        assert_eq!(pango_font_points("Noto Sans Bold 10.5"), Some(10.5));
+        assert_eq!(pango_font_points("Cantarell"), None);
+        assert_eq!(qt_font_points("Noto Sans,10,-1,5,50,0,0,0,0,0"), Some(10.0));
+        assert_eq!(qt_font_points("Noto Sans"), None);
+        assert_eq!(qt_font_points("Noto Sans,-1,12,5,50"), None);
+    }
 }

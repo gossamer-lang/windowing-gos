@@ -74,6 +74,8 @@ pub struct Preferences {
     /// The factor the desktop scales text by beyond the display's content
     /// scale, 1.0 at the normal size.
     pub text_scale: Option<f64>
+    /// The size in points of the font the desktop draws its menus in.
+    pub menu_font_size: Option<f64>
 }
 
 /// The desktop's preferences now. From the first call on, the session
