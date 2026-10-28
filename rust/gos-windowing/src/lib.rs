@@ -171,13 +171,14 @@ fn preserve_driver_globals(_driver: &str) -> bool {
 }
 
 // A window's framebuffer is drawn in software. The X11 and offscreen drivers
-// present it through a framebuffer of their own (X11 shared memory), which
-// keeps SDL from backing it with an OpenGL renderer that loads the GL driver
-// into the process. Wayland has no such framebuffer and always presents
-// through a renderer. SDL's unaccelerated framebuffer presents nothing on
-// recent macOS, and the other platforms' accelerated paths load no GL driver.
+// present it through a framebuffer of their own (X11 shared memory, plain
+// memory offscreen), which keeps SDL from backing it with an OpenGL renderer
+// that loads the GL driver into the process; offscreen on macOS has no GL
+// driver at all. Wayland has no such framebuffer and always presents through
+// a renderer. SDL's unaccelerated framebuffer presents nothing on recent
+// macOS, and the other platforms' accelerated paths load no GL driver.
 fn software_framebuffer_hint(driver: &str) -> Result<()> {
-    if cfg!(target_os = "linux") && (driver == "x11" || driver == "offscreen") {
+    if driver == "offscreen" || (cfg!(target_os = "linux") && driver == "x11") {
         return set_hint(
             SDL_HINT_FRAMEBUFFER_ACCELERATION,
             "SDL_FRAMEBUFFER_ACCELERATION",

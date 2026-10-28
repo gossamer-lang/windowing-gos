@@ -932,6 +932,15 @@ pub(crate) fn create(options: &WindowOptions, redraw_type: u32) -> Result<Window
         Graphics::Metal => props.set_bool(SDL_PROP_WINDOW_CREATE_METAL_BOOLEAN, true)?,
         Graphics::Software | Graphics::External => {}
     }
+    // SDL gives a macOS window a graphics API unless the window names one or
+    // its own context; the offscreen driver's OpenGL needs EGL, which macOS
+    // lacks, and a software window draws into the driver's framebuffer.
+    if options.graphics == Graphics::Software && crate::video_driver() == "offscreen" {
+        props.set_bool(
+            SDL_PROP_WINDOW_CREATE_EXTERNAL_GRAPHICS_CONTEXT_BOOLEAN,
+            true,
+        )?;
+    }
     match kind {
         WindowKind::Normal => {}
         WindowKind::Utility => props.set_bool(SDL_PROP_WINDOW_CREATE_UTILITY_BOOLEAN, true)?,
