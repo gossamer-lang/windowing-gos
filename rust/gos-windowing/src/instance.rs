@@ -565,17 +565,22 @@ mod tests {
 
     #[test]
     fn a_path_round_trips_through_its_file_uri() {
+        // A decoded path answers in the platform's spelling: `\` on Windows.
+        let native = |path: &str| {
+            Some(if cfg!(target_os = "windows") {
+                path.replace('/', "\\")
+            } else {
+                path.to_string()
+            })
+        };
         let uri = file_uri("/tmp/a b/ü#1.txt");
         assert_eq!(uri, "file:///tmp/a%20b/%C3%BC%231.txt");
-        assert_eq!(uri_path(&uri).as_deref(), Some("/tmp/a b/ü#1.txt"));
-        assert_eq!(
-            uri_path("file://localhost/etc/hosts").as_deref(),
-            Some("/etc/hosts")
-        );
+        assert_eq!(uri_path(&uri), native("/tmp/a b/ü#1.txt"));
+        assert_eq!(uri_path("file://localhost/etc/hosts"), native("/etc/hosts"));
         assert_eq!(uri_path("https://example.com/x"), None);
-        assert_eq!(uri_path("file:///a%ü").as_deref(), Some("/a%ü"));
-        assert_eq!(uri_path("file:///a%界").as_deref(), Some("/a%界"));
-        assert_eq!(uri_path("file:///a%").as_deref(), Some("/a%"));
+        assert_eq!(uri_path("file:///a%ü"), native("/a%ü"));
+        assert_eq!(uri_path("file:///a%界"), native("/a%界"));
+        assert_eq!(uri_path("file:///a%"), native("/a%"));
         #[cfg(not(target_os = "windows"))]
         assert_eq!(uri_path("file://server/share"), None);
         #[cfg(target_os = "windows")]
