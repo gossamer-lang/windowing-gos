@@ -1,0 +1,3 @@
+# `app_simulate` takes an event's words as scalars, which cross the binding
+# without an allocation on either side; the most an event takes is nine.
+too-many-arguments-threshold = 9

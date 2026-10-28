@@ -51,8 +51,10 @@ pub fn locales() -> Result<Vec<Locale>> {
     let mut count = 0;
     // SAFETY: count receives the length; SDL answers a list to free, or null.
     let list = unsafe { SDL_GetPreferredLocales(&mut count) };
+    // SDL answers null when the user names no locale (`LANG` unset, or the
+    // `C` locale, which SDL skips), and otherwise only when out of memory.
     if list.is_null() {
-        return Err(support::failure("reading the preferred locales"));
+        return Ok(Vec::new());
     }
     let mut out: Vec<Locale> = Vec::new();
     // SAFETY: SDL answered `count` locale pointers inside the list's allocation.

@@ -1,10 +1,11 @@
 //! The `windowing_app`, `windowing_window`, and `windowing_desktop` Gossamer
 //! modules: gos-windowing over the binding boundary. Windows, cursors, trays, GL contexts, and instance listeners
-//! cross as ids; structured values cross as JSON in the shape the Gossamer
-//! types encode to.
+//! cross as ids; events cross as flat words (`wire`), and other structured
+//! values as JSON in the shape the Gossamer types encode to.
 
 mod hooks;
 mod state;
+mod wire;
 
 use gos_windowing::window::WindowId;
 use gos_windowing::{access, clipboard, cursor, dialog, display, instance, menu, system, tray};
@@ -238,10 +239,47 @@ mod app_bindings {
         with_app(|app| app.capture_pointer(captured).map_err(fail))
     }
 
-    /// Queues an encoded event as if the platform had delivered it.
-    pub fn app_simulate(event: String) -> Result<(), GosError> {
-        let e: gos_windowing::Event = from_json(&event, "an event")?;
-        with_app(|app| app.simulate(e).map_err(fail))
+    /// Queues an event, as its words, as if the platform had delivered it;
+    /// an event with texts reads those `simulate_texts` kept. The words
+    /// cross as scalars, which need no allocation on either side.
+    pub fn app_simulate(
+        tag: i64,
+        w1: i64,
+        w2: i64,
+        w3: i64,
+        w4: i64,
+        w5: i64,
+        w6: i64,
+        w7: i64,
+        w8: i64,
+    ) -> Result<(), GosError> {
+        let texts = if wire::carries_texts(tag) {
+            wire::take_texts()
+        } else {
+            Vec::new()
+        };
+        let e = wire::decode(&[tag, w1, w2, w3, w4, w5, w6, w7, w8], texts).map_err(fail)?;
+        state::with_event_app(|app| app.simulate(e).map_err(fail))
+    }
+
+    /// Keeps the texts of the event the next `app_simulate` queues.
+    pub fn simulate_texts(texts: Vec<String>) {
+        wire::keep_texts(texts)
+    }
+
+    /// The tag of the event `json` encodes, its words and texts kept as a
+    /// pump keeps them, so a test can hold the two sides' layouts against
+    /// each other.
+    pub fn event_wire(json: String) -> Result<i64, GosError> {
+        let e: gos_windowing::Event = from_json(&json, "an event")?;
+        Ok(wire::answer(&e))
+    }
+
+    /// The JSON of the event the words and texts name.
+    pub fn event_json(words: Vec<i64>, texts: Vec<String>) -> Result<String, GosError> {
+        wire::decode(&words, texts)
+            .map(|e| to_json(&e))
+            .map_err(fail)
     }
 
     pub fn video_driver() -> String {

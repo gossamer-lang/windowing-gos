@@ -26,15 +26,15 @@ function Wait-Line($process, [string]$want, [string]$name) {
     throw "$name ended before '$want'"
 }
 
-$probe = Start-Program $Probe '' $false
-Wait-Line $probe 'probe ready' 'probe' | Out-Null
-$client = Start-Program $Client '' $true
-Wait-Line $client 'set range' 'client' | Out-Null
-Wait-Line $probe 'updated' 'probe' | Out-Null
-$client.StandardInput.WriteLine('phase2')
-$client.StandardInput.Flush()
-Wait-Line $client 'set focus' 'client' | Out-Null
-Wait-Line $probe 'focus returned' 'probe' | Out-Null
+$probeProcess = Start-Program $Probe '' $false
+Wait-Line $probeProcess 'probe ready' 'probe' | Out-Null
+$clientProcess = Start-Program $Client '' $true
+Wait-Line $clientProcess 'set range' 'client' | Out-Null
+Wait-Line $probeProcess 'updated' 'probe' | Out-Null
+$clientProcess.StandardInput.WriteLine('phase2')
+$clientProcess.StandardInput.Flush()
+Wait-Line $clientProcess 'set focus' 'client' | Out-Null
+Wait-Line $probeProcess 'focus returned' 'probe' | Out-Null
 
 $expected = @(
     'client: root: UIA probe',

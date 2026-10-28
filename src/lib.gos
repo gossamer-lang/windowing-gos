@@ -34,13 +34,13 @@
 // Every call that touches a window runs on the main thread; goroutines
 // reach the loop through a `Waker` and a channel.
 
-use std::{errors, ffi}
+use std::errors
 use std::encoding::json
 use windowing_app
 use windowing_hooks
 
 use crate::support
-use crate::{access, cursor, dialog, display, drag, event, instance, keys, menu, notify, support, surface, system, tray, waker, window}
+use crate::{cursor, dialog, display, drag, event, instance, keys, menu, notify, support, surface, system, tray, waker, window, wire}
 
 pub type Capabilities = capabilities::Capabilities
 pub type Capability = capabilities::Capability
@@ -198,15 +198,15 @@ impl App {
     /// platform's own wait, so an idle loop takes no CPU.
     pub fn wait(&self) -> Result<event::Event, errors::Error> {
         support::require_main_thread("App::wait")
-        support::event(support::ok(windowing_hooks::wait())?)
+        received(support::ok(windowing_hooks::wait())?)
     }
 
     /// Waits up to `ms` milliseconds for the next event: `None` when none
     /// came. For a loop that also animates on a clock.
     pub fn wait_timeout(&self, ms: i64) -> Result<Option<event::Event>, errors::Error> {
         support::require_main_thread("App::wait_timeout")
-        let text = support::ok(windowing_hooks::wait_timeout(ms))?
-        if text.is_empty() { Ok(None) } else { Ok(Some(support::event(text)?)) }
+        let tag = support::ok(windowing_hooks::wait_timeout(ms))?
+        if tag == wire::NO_EVENT { Ok(None) } else { Ok(Some(received(tag)?)) }
     }
 
     /// The next event of the batch the platform has delivered, without
@@ -214,8 +214,14 @@ impl App {
     /// stops even while events keep arriving, which the next batch holds.
     pub fn poll(&self) -> Option<event::Event> {
         support::require_main_thread("App::poll")
-        let text = windowing_hooks::poll()
-        if text.is_empty() { None } else { support::event(text).ok() }
+        let tag = windowing_hooks::poll()
+        if tag == wire::NO_EVENT {
+            None
+        } else if tag == wire::HOOKED {
+            poll_with_hooks()
+        } else {
+            wire::decode(tag)
+        }
     }
 
     /// A waker goroutines may hold to wake `wait`.
@@ -280,7 +286,25 @@ impl App {
     /// tests or record-and-replay.
     pub fn simulate(&self, event: event::Event) -> Result<(), errors::Error> {
         support::require_main_thread("App::simulate")
-        support::ok(windowing_app::app_simulate(json::encode(event)))
+        let w = wire::encode(event)
+        if wire::carries_texts(w[0]) {
+            windowing_app::simulate_texts(wire::texts_of(event))
+        }
+        support::ok(windowing_app::app_simulate(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8]))
+    }
+}
+
+// A pump while a hook is set, through the binding call that can run it.
+fn poll_with_hooks() -> Option<event::Event> {
+    let tag = windowing_hooks::poll_with_hooks()
+    if tag == wire::NO_EVENT { None } else { wire::decode(tag) }
+}
+
+// The event a waiting pump answered `tag` for.
+fn received(tag: i64) -> Result<event::Event, errors::Error> {
+    match wire::decode(tag) {
+        Some(e) => Ok(e)
+        None => Err(errors::new(f"the core answered an unknown event {tag}"))
     }
 }
 

@@ -7,7 +7,6 @@ use windowing_app
 use windowing_window
 use windowing_hooks
 
-use crate::display
 use crate::display::{Display, Mode, Rect}
 use crate::support
 

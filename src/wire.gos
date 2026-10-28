@@ -1,0 +1,684 @@
+// Events cross the binding as words, a shape the binding passes as it is,
+// in the layout `rust/binding/src/wire.rs` writes and reads: the variant's
+// position in `Event` as the tag, then each field as one or more words, and
+// the event's strings beside them as texts. A word carries an id, a count, a
+// boolean (0 or 1), an enum position, a key or scancode code, the bit set of
+// `Mods`, `Buttons`, or `PenState`, or the bit pattern of an `f64`.
+
+use windowing_hooks
+use crate::dialog::{DialogChoice, DialogId}
+use crate::display::{DisplayId, Orientation}
+use crate::drag::{DragId, DragOperation}
+use crate::event::{Buttons, Event, Mods, MouseButton, PenAxis, PenState, PointerSource}
+use crate::keys::{Key, Scancode}
+use crate::menu::MenuSource
+use crate::system::Theme
+use crate::window::WindowId
+
+/// The tag a plain pump answers in place of an event while a hook is set.
+pub (package) const HOOKED: i64 = -1
+
+/// The tag a pump answers when no event came.
+pub (package) const NO_EVENT: i64 = -2
+
+/// The event a pump answered `tag` for, `None` for a tag no event has. Its
+/// words and texts stay with the binding, which keeps the last answered
+/// event's until the next.
+pub (package) fn decode(tag: i64) -> Option<Event> {
+    let event = match tag {
+        0 => Event::QuitRequested
+        1 => Event::Terminating
+        2 => Event::LowMemory
+        3 => Event::Suspending
+        4 => Event::Suspended
+        5 => Event::Resuming
+        6 => Event::Resumed
+        7 => Event::LocaleChanged
+        8 => Event::ThemeChanged { theme: theme(word(1)) }
+        9 => Event::KeymapChanged
+        10 => Event::ClipboardChanged { owned: word(1) != 0 }
+        11 => Event::Wake
+        12 => Event::RenderReset { window: window(word(1)) }
+        13 => Event::RedrawRequested { window: window(word(1)) }
+        14 => Event::DialogClosed { dialog: dialog(word(1)), choice: choice(taken_texts()) }
+        15 => Event::DisplayAdded { display: display(word(1)) }
+        16 => Event::DisplayRemoved { display: display(word(1)) }
+        17 => Event::DisplayMoved { display: display(word(1)) }
+        18 => Event::DisplayModeChanged { display: display(word(1)) }
+        19 => Event::DisplayScaleChanged { display: display(word(1)) }
+        20 => Event::DisplayUsableBoundsChanged { display: display(word(1)) }
+        21 => Event::DisplayOrientationChanged { display: display(word(1)), orientation: orientation(word(2)) }
+        22 => Event::WindowShown { window: window(word(1)) }
+        23 => Event::WindowHidden { window: window(word(1)) }
+        24 => Event::Moved { window: window(word(1)), x: word(2), y: word(3) }
+        25 => Event::Resized { window: window(word(1)), width: word(2), height: word(3) }
+        26 => Event::PixelSizeChanged { window: window(word(1)), width: word(2), height: word(3) }
+        27 => Event::ScaleChanged { window: window(word(1)), scale: fl(word(2)) }
+        28 => Event::Minimized { window: window(word(1)) }
+        29 => Event::Maximized { window: window(word(1)) }
+        30 => Event::Restored { window: window(word(1)) }
+        31 => Event::PointerEntered { window: window(word(1)) }
+        32 => Event::PointerLeft { window: window(word(1)) }
+        33 => Event::FocusGained { window: window(word(1)) }
+        34 => Event::FocusLost { window: window(word(1)) }
+        35 => Event::CloseRequested { window: window(word(1)) }
+        36 => Event::DisplayChanged { window: window(word(1)), display: display(word(2)) }
+        37 => Event::Occluded { window: window(word(1)) }
+        38 => Event::EnteredFullscreen { window: window(word(1)) }
+        39 => Event::LeftFullscreen { window: window(word(1)) }
+        40 => Event::KeyDown {
+            window: window(word(1))
+            key: Key::from_code(word(2) as u32)
+            scancode: Scancode::from_code(word(3) as i32)
+            mods: mods(word(4))
+            repeat: word(5) != 0
+        }
+        41 => Event::KeyUp {
+            window: window(word(1))
+            key: Key::from_code(word(2) as u32)
+            scancode: Scancode::from_code(word(3) as i32)
+            mods: mods(word(4))
+        }
+        42 => Event::Text { window: window(word(1)), text: taken_texts()[0] }
+        43 => Event::Composing { window: window(word(1)), text: taken_texts()[0], cursor: word(2), selection: word(3) }
+        44 => Event::PointerMoved {
+            window: window(word(1))
+            x: fl(word(4))
+            y: fl(word(5))
+            dx: fl(word(6))
+            dy: fl(word(7))
+            buttons: buttons(word(2))
+            source: source(word(3))
+        }
+        45 => Event::ButtonDown {
+            window: window(word(1))
+            button: button(word(2), word(3))
+            x: fl(word(6))
+            y: fl(word(7))
+            clicks: word(4)
+            source: source(word(5))
+        }
+        46 => Event::ButtonUp {
+            window: window(word(1))
+            button: button(word(2), word(3))
+            x: fl(word(6))
+            y: fl(word(7))
+            clicks: word(4)
+            source: source(word(5))
+        }
+        47 => Event::Wheel { window: window(word(1)), dx: fl(word(2)), dy: fl(word(3)), x: fl(word(4)), y: fl(word(5)) }
+        48 => Event::TouchDown {
+            window: window(word(1))
+            device: word(2) as u64
+            finger: word(3) as u64
+            x: fl(word(4))
+            y: fl(word(5))
+            pressure: fl(word(6))
+        }
+        49 => Event::TouchMoved {
+            window: window(word(1))
+            device: word(2) as u64
+            finger: word(3) as u64
+            x: fl(word(4))
+            y: fl(word(5))
+            dx: fl(word(6))
+            dy: fl(word(7))
+            pressure: fl(word(8))
+        }
+        50 => Event::TouchUp { window: window(word(1)), device: word(2) as u64, finger: word(3) as u64, x: fl(word(4)), y: fl(word(5)) }
+        51 => Event::TouchCancelled { window: window(word(1)), device: word(2) as u64, finger: word(3) as u64 }
+        52 => Event::PinchBegan { window: window(word(1)) }
+        53 => Event::Pinch { window: window(word(1)), scale: fl(word(2)) }
+        54 => Event::PinchEnded { window: window(word(1)) }
+        55 => Event::PenEntered { window: window(word(1)), pen: word(2) as u32 }
+        56 => Event::PenLeft { window: window(word(1)), pen: word(2) as u32 }
+        57 => Event::PenDown { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
+        58 => Event::PenUp { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
+        59 => Event::PenMoved { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), state: pen_state(word(3)) }
+        60 => Event::PenButtonDown { window: window(word(1)), pen: word(2) as u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
+        61 => Event::PenButtonUp { window: window(word(1)), pen: word(2) as u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
+        62 => Event::PenAxisChanged {
+            window: window(word(1))
+            pen: word(2) as u32
+            axis: axis(word(3), word(4))
+            value: fl(word(5))
+            x: fl(word(6))
+            y: fl(word(7))
+        }
+        63 => Event::DropBegan { window: window(word(1)) }
+        64 => Event::DropMoved { window: window(word(1)), x: fl(word(2)), y: fl(word(3)) }
+        65 => Event::DroppedFile { window: window(word(1)), path: taken_texts()[0], x: fl(word(2)), y: fl(word(3)) }
+        66 => Event::DroppedText { window: window(word(1)), text: taken_texts()[0], x: fl(word(2)), y: fl(word(3)) }
+        67 => Event::DropEnded { window: window(word(1)), x: fl(word(2)), y: fl(word(3)) }
+        68 => Event::OpenRequested { path: taken_texts()[0] }
+        69 => Event::MenuSelected { source: menu_source(word(1), word(2)), item: word(3) as u32 }
+        70 => Event::DragFinished { drag: drag(word(1)), operation: operation(word(2)) }
+        71 => Event::PreferencesChanged
+        _ => return None
+    }
+    Some(event)
+}
+
+/// `event`'s words, padded to the most an event takes; `texts_of` holds
+/// its texts.
+pub (package) fn encode(event: Event) -> [i64; 9] {
+    match event {
+        Event::QuitRequested => [0, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Terminating => [1, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::LowMemory => [2, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Suspending => [3, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Suspended => [4, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Resuming => [5, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Resumed => [6, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::LocaleChanged => [7, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::ThemeChanged { theme } => [8, theme_code(theme), 0, 0, 0, 0, 0, 0, 0]
+        Event::KeymapChanged => [9, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::ClipboardChanged { owned } => [10, flag(owned), 0, 0, 0, 0, 0, 0, 0]
+        Event::Wake => [11, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::RenderReset { window } => [12, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::RedrawRequested { window } => [13, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::DialogClosed { dialog, choice } => {
+            let raw: u64 = dialog.into()
+            match choice {
+                DialogChoice::Chosen { filter, .. } => {
+                    let has = if filter.is_some() { 1 } else { 0 }
+                    [14, raw as i64, 0, has, filter.unwrap_or(0), 0, 0, 0, 0]
+                }
+                DialogChoice::Cancelled => [14, raw as i64, 1, 0, 0, 0, 0, 0, 0]
+                DialogChoice::Failed { .. } => [14, raw as i64, 2, 0, 0, 0, 0, 0, 0]
+            }
+        }
+        Event::DisplayAdded { display } => [15, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayRemoved { display } => [16, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayMoved { display } => [17, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayModeChanged { display } => [18, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayScaleChanged { display } => [19, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayUsableBoundsChanged { display } => [20, display_id(display), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayOrientationChanged { display, orientation } => {
+            [21, display_id(display), orientation_code(orientation), 0, 0, 0, 0, 0, 0]
+        }
+        Event::WindowShown { window } => [22, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::WindowHidden { window } => [23, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::Moved { window, x, y } => [24, window_id(window), x, y, 0, 0, 0, 0, 0]
+        Event::Resized { window, width, height } => [25, window_id(window), width, height, 0, 0, 0, 0, 0]
+        Event::PixelSizeChanged { window, width, height } => [26, window_id(window), width, height, 0, 0, 0, 0, 0]
+        Event::ScaleChanged { window, scale } => [27, window_id(window), bits(scale), 0, 0, 0, 0, 0, 0]
+        Event::Minimized { window } => [28, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::Maximized { window } => [29, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::Restored { window } => [30, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::PointerEntered { window } => [31, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::PointerLeft { window } => [32, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::FocusGained { window } => [33, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::FocusLost { window } => [34, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::CloseRequested { window } => [35, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::DisplayChanged { window, display } => [36, window_id(window), display_id(display), 0, 0, 0, 0, 0, 0]
+        Event::Occluded { window } => [37, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::EnteredFullscreen { window } => [38, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::LeftFullscreen { window } => [39, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::KeyDown { window, key, scancode, mods, repeat } => {
+            [40, window_id(window), key.code() as i64, scancode.code() as i64, mods_bits(mods), flag(repeat), 0, 0, 0]
+        }
+        Event::KeyUp { window, key, scancode, mods } => {
+            [41, window_id(window), key.code() as i64, scancode.code() as i64, mods_bits(mods), 0, 0, 0, 0]
+        }
+        Event::Text { window, .. } => [42, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::Composing { window, cursor, selection, .. } => [43, window_id(window), cursor, selection, 0, 0, 0, 0, 0]
+        Event::PointerMoved { window, x, y, dx, dy, buttons, source } => {
+            [44, window_id(window), buttons_bits(buttons), source_code(source), bits(x), bits(y), bits(dx), bits(dy), 0]
+        }
+        Event::ButtonDown { window, button, x, y, clicks, source } => {
+            let kind, value = button_code(button)
+            [45, window_id(window), kind, value, clicks, source_code(source), bits(x), bits(y), 0]
+        }
+        Event::ButtonUp { window, button, x, y, clicks, source } => {
+            let kind, value = button_code(button)
+            [46, window_id(window), kind, value, clicks, source_code(source), bits(x), bits(y), 0]
+        }
+        Event::Wheel { window, dx, dy, x, y } => [47, window_id(window), bits(dx), bits(dy), bits(x), bits(y), 0, 0, 0]
+        Event::TouchDown { window, device, finger, x, y, pressure } => {
+            [48, window_id(window), device as i64, finger as i64, bits(x), bits(y), bits(pressure), 0, 0]
+        }
+        Event::TouchMoved { window, device, finger, x, y, dx, dy, pressure } => {
+            [49, window_id(window), device as i64, finger as i64, bits(x), bits(y), bits(dx), bits(dy), bits(pressure)]
+        }
+        Event::TouchUp { window, device, finger, x, y } => {
+            [50, window_id(window), device as i64, finger as i64, bits(x), bits(y), 0, 0, 0]
+        }
+        Event::TouchCancelled { window, device, finger } => [51, window_id(window), device as i64, finger as i64, 0, 0, 0, 0, 0]
+        Event::PinchBegan { window } => [52, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::Pinch { window, scale } => [53, window_id(window), bits(scale), 0, 0, 0, 0, 0, 0]
+        Event::PinchEnded { window } => [54, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::PenEntered { window, pen } => [55, window_id(window), pen as i64, 0, 0, 0, 0, 0, 0]
+        Event::PenLeft { window, pen } => [56, window_id(window), pen as i64, 0, 0, 0, 0, 0, 0]
+        Event::PenDown { window, pen, x, y, eraser } => [57, window_id(window), pen as i64, flag(eraser), bits(x), bits(y), 0, 0, 0]
+        Event::PenUp { window, pen, x, y, eraser } => [58, window_id(window), pen as i64, flag(eraser), bits(x), bits(y), 0, 0, 0]
+        Event::PenMoved { window, pen, x, y, state } => {
+            [59, window_id(window), pen as i64, pen_state_bits(state), bits(x), bits(y), 0, 0, 0]
+        }
+        Event::PenButtonDown { window, pen, button, x, y } => [60, window_id(window), pen as i64, button, bits(x), bits(y), 0, 0, 0]
+        Event::PenButtonUp { window, pen, button, x, y } => [61, window_id(window), pen as i64, button, bits(x), bits(y), 0, 0, 0]
+        Event::PenAxisChanged { window, pen, axis, value, x, y } => {
+            let kind, other = axis_code(axis)
+            [62, window_id(window), pen as i64, kind, other, bits(value), bits(x), bits(y), 0]
+        }
+        Event::DropBegan { window } => [63, window_id(window), 0, 0, 0, 0, 0, 0, 0]
+        Event::DropMoved { window, x, y } => [64, window_id(window), bits(x), bits(y), 0, 0, 0, 0, 0]
+        Event::DroppedFile { window, x, y, .. } => [65, window_id(window), bits(x), bits(y), 0, 0, 0, 0, 0]
+        Event::DroppedText { window, x, y, .. } => [66, window_id(window), bits(x), bits(y), 0, 0, 0, 0, 0]
+        Event::DropEnded { window, x, y } => [67, window_id(window), bits(x), bits(y), 0, 0, 0, 0, 0]
+        Event::OpenRequested { .. } => [68, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::MenuSelected { source, item } => {
+            let kind, id = menu_source_code(source)
+            [69, kind, id, item as i64, 0, 0, 0, 0, 0]
+        }
+        Event::DragFinished { drag, operation } => {
+            let raw: u64 = drag.into()
+            [70, raw as i64, operation_code(operation), 0, 0, 0, 0, 0, 0]
+        }
+        Event::PreferencesChanged => [71, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
+}
+
+/// `event`'s texts, empty for an event without any.
+pub (package) fn texts_of(event: Event) -> Vec<String> {
+    match event {
+        Event::DialogClosed { choice, .. } => match choice {
+            DialogChoice::Chosen { paths, .. } => paths
+            DialogChoice::Failed { reason } => #[reason]
+            DialogChoice::Cancelled => #[]
+        }
+        Event::Text { text, .. } => #[text]
+        Event::Composing { text, .. } => #[text]
+        Event::DroppedFile { path, .. } => #[path]
+        Event::DroppedText { text, .. } => #[text]
+        Event::OpenRequested { path } => #[path]
+        _ => #[]
+    }
+}
+
+/// Whether the event `tag` names has texts beside its words.
+pub (package) fn carries_texts(tag: i64) -> bool {
+    match tag {
+        14 | 42 | 43 | 65 | 66 | 68 => true
+        _ => false
+    }
+}
+
+fn word(i: i64) -> i64 {
+    windowing_hooks::event_word(i)
+}
+
+fn taken_texts() -> Vec<String> {
+    windowing_hooks::event_texts()
+}
+
+fn fl(word: i64) -> f64 {
+    f64::from_bits(word as u64)
+}
+
+fn bits(x: f64) -> i64 {
+    x.to_bits() as i64
+}
+
+fn flag(on: bool) -> i64 {
+    if on { 1 } else { 0 }
+}
+
+fn window(n: i64) -> WindowId {
+    (n as u32).into()
+}
+
+fn window_id(id: WindowId) -> i64 {
+    let raw: u32 = id.into()
+    raw as i64
+}
+
+fn display(n: i64) -> DisplayId {
+    (n as u32).into()
+}
+
+fn display_id(id: DisplayId) -> i64 {
+    let raw: u32 = id.into()
+    raw as i64
+}
+
+// u64 ids keep their bit pattern in an i64.
+fn dialog(n: i64) -> DialogId {
+    (n as u64).into()
+}
+
+fn drag(n: i64) -> DragId {
+    (n as u64).into()
+}
+
+fn theme(n: i64) -> Theme {
+    match n {
+        0 => Theme::Light
+        1 => Theme::Dark
+        _ => Theme::Unknown
+    }
+}
+
+fn theme_code(theme: Theme) -> i64 {
+    match theme {
+        Theme::Light => 0
+        Theme::Dark => 1
+        Theme::Unknown => 2
+    }
+}
+
+fn orientation(n: i64) -> Orientation {
+    match n {
+        1 => Orientation::Landscape
+        2 => Orientation::LandscapeFlipped
+        3 => Orientation::Portrait
+        4 => Orientation::PortraitFlipped
+        _ => Orientation::Unknown
+    }
+}
+
+fn orientation_code(o: Orientation) -> i64 {
+    match o {
+        Orientation::Unknown => 0
+        Orientation::Landscape => 1
+        Orientation::LandscapeFlipped => 2
+        Orientation::Portrait => 3
+        Orientation::PortraitFlipped => 4
+    }
+}
+
+fn mods(n: i64) -> Mods {
+    Mods {
+        shift: (n & 1) != 0
+        ctrl: (n & 2) != 0
+        alt: (n & 4) != 0
+        gui: (n & 8) != 0
+        alt_gr: (n & 16) != 0
+        caps_lock: (n & 32) != 0
+        num_lock: (n & 64) != 0
+        scroll_lock: (n & 128) != 0
+    }
+}
+
+fn mods_bits(m: Mods) -> i64 {
+    flag(m.shift) | flag(m.ctrl) << 1 | flag(m.alt) << 2 | flag(m.gui) << 3 |
+        flag(m.alt_gr) << 4 | flag(m.caps_lock) << 5 | flag(m.num_lock) << 6 |
+        flag(m.scroll_lock) << 7
+}
+
+fn buttons(n: i64) -> Buttons {
+    Buttons {
+        left: (n & 1) != 0
+        middle: (n & 2) != 0
+        right: (n & 4) != 0
+        back: (n & 8) != 0
+        forward: (n & 16) != 0
+    }
+}
+
+fn buttons_bits(b: Buttons) -> i64 {
+    flag(b.left) | flag(b.middle) << 1 | flag(b.right) << 2 | flag(b.back) << 3 | flag(b.forward) << 4
+}
+
+fn pen_state(n: i64) -> PenState {
+    PenState {
+        down: (n & 1) != 0
+        eraser: (n & 2) != 0
+        primary_button: (n & 4) != 0
+        secondary_button: (n & 8) != 0
+        tertiary_button: (n & 16) != 0
+    }
+}
+
+fn pen_state_bits(s: PenState) -> i64 {
+    flag(s.down) | flag(s.eraser) << 1 | flag(s.primary_button) << 2 |
+        flag(s.secondary_button) << 3 | flag(s.tertiary_button) << 4
+}
+
+fn source(n: i64) -> PointerSource {
+    match n {
+        1 => PointerSource::Touch
+        2 => PointerSource::Pen
+        _ => PointerSource::Mouse
+    }
+}
+
+fn source_code(s: PointerSource) -> i64 {
+    match s {
+        PointerSource::Mouse => 0
+        PointerSource::Touch => 1
+        PointerSource::Pen => 2
+    }
+}
+
+// A kind, then the number `Other` carries (0 for the named buttons).
+fn button(kind: i64, value: i64) -> MouseButton {
+    match kind {
+        0 => MouseButton::Left
+        1 => MouseButton::Middle
+        2 => MouseButton::Right
+        3 => MouseButton::Back
+        4 => MouseButton::Forward
+        _ => MouseButton::Other(value)
+    }
+}
+
+fn button_code(b: MouseButton) -> (i64, i64) {
+    match b {
+        MouseButton::Left => (0, 0)
+        MouseButton::Middle => (1, 0)
+        MouseButton::Right => (2, 0)
+        MouseButton::Back => (3, 0)
+        MouseButton::Forward => (4, 0)
+        MouseButton::Other(n) => (5, n)
+    }
+}
+
+fn axis(kind: i64, value: i64) -> PenAxis {
+    match kind {
+        0 => PenAxis::Pressure
+        1 => PenAxis::TiltX
+        2 => PenAxis::TiltY
+        3 => PenAxis::Distance
+        4 => PenAxis::Rotation
+        5 => PenAxis::Slider
+        6 => PenAxis::TangentialPressure
+        _ => PenAxis::Other(value)
+    }
+}
+
+fn axis_code(a: PenAxis) -> (i64, i64) {
+    match a {
+        PenAxis::Pressure => (0, 0)
+        PenAxis::TiltX => (1, 0)
+        PenAxis::TiltY => (2, 0)
+        PenAxis::Distance => (3, 0)
+        PenAxis::Rotation => (4, 0)
+        PenAxis::Slider => (5, 0)
+        PenAxis::TangentialPressure => (6, 0)
+        PenAxis::Other(n) => (7, n)
+    }
+}
+
+// A dialog's choice follows its id: a kind, then for `Chosen` whether a
+// filter is set and its index, with the paths as the texts.
+fn choice(t: Vec<String>) -> DialogChoice {
+    match word(2) {
+        0 => DialogChoice::Chosen { paths: t, filter: if word(3) != 0 { Some(word(4)) } else { None } }
+        1 => DialogChoice::Cancelled
+        _ => DialogChoice::Failed { reason: t[0] }
+    }
+}
+
+// A menu bar choice carries its window, -1 for none (a window id is a u32);
+// a tray choice its tray.
+fn menu_source(kind: i64, id: i64) -> MenuSource {
+    match kind {
+        0 => MenuSource::MenuBar { window: if id < 0 { None } else { Some(window(id)) } }
+        _ => MenuSource::Tray { tray: (id as u32).into() }
+    }
+}
+
+fn menu_source_code(s: MenuSource) -> (i64, i64) {
+    match s {
+        MenuSource::MenuBar { window } => (0, match window { Some(w) => window_id(w), None => -1 })
+        MenuSource::Tray { tray } => {
+            let raw: u32 = tray.into()
+            (1, raw as i64)
+        }
+    }
+}
+
+fn operation(n: i64) -> Option<DragOperation> {
+    match n {
+        0 => Some(DragOperation::Copy)
+        1 => Some(DragOperation::Move)
+        2 => Some(DragOperation::Link)
+        _ => None
+    }
+}
+
+fn operation_code(o: Option<DragOperation>) -> i64 {
+    match o {
+        None => -1
+        Some(DragOperation::Copy) => 0
+        Some(DragOperation::Move) => 1
+        Some(DragOperation::Link) => 2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::errors
+    use std::encoding::json
+    use windowing_app
+    use super::{carries_texts, decode, encode, texts_of}
+    use crate::support
+    use crate::dialog::DialogChoice
+    use crate::display::Orientation
+    use crate::drag::DragOperation
+    use crate::event::{Buttons, Event, Mods, MouseButton, PenAxis, PenState, PointerSource}
+    use crate::keys::{Key, Scancode}
+    use crate::menu::MenuSource
+    use crate::system::Theme
+
+    // One event of every variant in declaration order, then the nested kinds
+    // the first pass leaves out.
+    fn samples() -> Vec<Event> {
+        let window = (7 as u32).into()
+        let display = (2 as u32).into()
+        let mods = Mods { shift: true, alt_gr: true, scroll_lock: true, ..Mods::default() }
+        #[
+            Event::QuitRequested
+            Event::Terminating
+            Event::LowMemory
+            Event::Suspending
+            Event::Suspended
+            Event::Resuming
+            Event::Resumed
+            Event::LocaleChanged
+            Event::ThemeChanged { theme: Theme::Dark }
+            Event::KeymapChanged
+            Event::ClipboardChanged { owned: true }
+            Event::Wake
+            Event::RenderReset { window: window }
+            Event::RedrawRequested { window: window }
+            Event::DialogClosed { dialog: u64::MAX.into(), choice: DialogChoice::Chosen { paths: #["/a b", "/c"], filter: Some(-3) } }
+            Event::DisplayAdded { display: display }
+            Event::DisplayRemoved { display: display }
+            Event::DisplayMoved { display: display }
+            Event::DisplayModeChanged { display: display }
+            Event::DisplayScaleChanged { display: display }
+            Event::DisplayUsableBoundsChanged { display: display }
+            Event::DisplayOrientationChanged { display: display, orientation: Orientation::PortraitFlipped }
+            Event::WindowShown { window: window }
+            Event::WindowHidden { window: window }
+            Event::Moved { window: window, x: -10, y: 20 }
+            Event::Resized { window: window, width: 640, height: 480 }
+            Event::PixelSizeChanged { window: window, width: 1280, height: 960 }
+            Event::ScaleChanged { window: window, scale: 1.5 }
+            Event::Minimized { window: window }
+            Event::Maximized { window: window }
+            Event::Restored { window: window }
+            Event::PointerEntered { window: window }
+            Event::PointerLeft { window: window }
+            Event::FocusGained { window: window }
+            Event::FocusLost { window: window }
+            Event::CloseRequested { window: window }
+            Event::DisplayChanged { window: window, display: (3 as u32).into() }
+            Event::Occluded { window: window }
+            Event::EnteredFullscreen { window: window }
+            Event::LeftFullscreen { window: window }
+            Event::KeyDown { window: window, key: Key::A, scancode: Scancode::A, mods: mods, repeat: true }
+            Event::KeyUp { window: window, key: Key::Escape, scancode: Scancode::Escape, mods: Mods::default() }
+            Event::Text { window: window, text: "héllo" }
+            Event::Composing { window: window, text: "かな", cursor: 1, selection: 1 }
+            Event::PointerMoved {
+                window: window, x: 1.25, y: 2.5, dx: -0.5, dy: 0.75
+                buttons: Buttons { left: true, forward: true, ..Buttons::default() }, source: PointerSource::Touch
+            }
+            Event::ButtonDown { window: window, button: MouseButton::Other(9), x: 3.0, y: 4.0, clicks: 2, source: PointerSource::Pen }
+            Event::ButtonUp { window: window, button: MouseButton::Back, x: 3.0, y: 4.0, clicks: 1, source: PointerSource::Mouse }
+            Event::Wheel { window: window, dx: 0.5, dy: -1.0, x: 5.0, y: 6.0 }
+            Event::TouchDown { window: window, device: u64::MAX - 1, finger: 3, x: 0.1, y: 0.2, pressure: 0.3 }
+            Event::TouchMoved { window: window, device: 1, finger: 3, x: 0.1, y: 0.2, dx: 0.01, dy: 0.02, pressure: 0.4 }
+            Event::TouchUp { window: window, device: 1, finger: 3, x: 0.1, y: 0.2 }
+            Event::TouchCancelled { window: window, device: 1, finger: 3 }
+            Event::PinchBegan { window: window }
+            Event::Pinch { window: window, scale: 0.8 }
+            Event::PinchEnded { window: window }
+            Event::PenEntered { window: window, pen: 4 }
+            Event::PenLeft { window: window, pen: 4 }
+            Event::PenDown { window: window, pen: 4, x: 1.0, y: 2.0, eraser: true }
+            Event::PenUp { window: window, pen: 4, x: 1.0, y: 2.0, eraser: false }
+            Event::PenMoved { window: window, pen: 4, x: 1.0, y: 2.0, state: PenState { down: true, tertiary_button: true, ..PenState::default() } }
+            Event::PenButtonDown { window: window, pen: 4, button: 2, x: 1.0, y: 2.0 }
+            Event::PenButtonUp { window: window, pen: 4, button: 2, x: 1.0, y: 2.0 }
+            Event::PenAxisChanged { window: window, pen: 4, axis: PenAxis::Other(12), value: 0.5, x: 1.0, y: 2.0 }
+            Event::DropBegan { window: window }
+            Event::DropMoved { window: window, x: 1.0, y: 2.0 }
+            Event::DroppedFile { window: window, path: "/tmp/x", x: 1.0, y: 2.0 }
+            Event::DroppedText { window: window, text: "drag", x: 1.0, y: 2.0 }
+            Event::DropEnded { window: window, x: 1.0, y: 2.0 }
+            Event::OpenRequested { path: "/doc" }
+            Event::MenuSelected { source: MenuSource::MenuBar { window: None }, item: 5 }
+            Event::DragFinished { drag: (9 as u64).into(), operation: Some(DragOperation::Link) }
+            Event::PreferencesChanged
+            Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Cancelled }
+            Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Failed { reason: "no portal" } }
+            Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Chosen { paths: #[], filter: None } }
+            Event::MenuSelected { source: MenuSource::MenuBar { window: Some((3 as u32).into()) }, item: 1 }
+            Event::MenuSelected { source: MenuSource::Tray { tray: (2 as u32).into() }, item: 1 }
+            Event::DragFinished { drag: (1 as u64).into(), operation: None }
+            Event::KeyDown { window: window, key: Key::Escape, scancode: Scancode::Escape, mods: Mods { ctrl: true, alt: true, gui: true, caps_lock: true, num_lock: true, ..Mods::default() }, repeat: false }
+            Event::ButtonDown { window: window, button: MouseButton::Left, x: 0.0, y: 0.0, clicks: 1, source: PointerSource::Mouse }
+            Event::ButtonDown { window: window, button: MouseButton::Middle, x: 0.0, y: 0.0, clicks: 1, source: PointerSource::Mouse }
+            Event::ButtonDown { window: window, button: MouseButton::Right, x: 0.0, y: 0.0, clicks: 1, source: PointerSource::Mouse }
+            Event::ButtonDown { window: window, button: MouseButton::Forward, x: 0.0, y: 0.0, clicks: 1, source: PointerSource::Mouse }
+            Event::PenAxisChanged { window: window, pen: 4, axis: PenAxis::TangentialPressure, value: 0.5, x: 1.0, y: 2.0 }
+            Event::PenAxisChanged { window: window, pen: 4, axis: PenAxis::Pressure, value: 0.5, x: 1.0, y: 2.0 }
+            Event::ThemeChanged { theme: Theme::Unknown }
+        ]
+    }
+
+    #[test]
+    fn every_variant_has_its_own_tag() {
+        let tags = samples().map(|e| encode(e)[0])
+        assert_eq(tags[..72], (0..72).collect::<Vec<i64>>())
+    }
+
+    #[test]
+    fn every_event_survives_both_codecs() -> Result<(), errors::Error> {
+        for e in samples() {
+            // The core reads the Gossamer words as the event Gossamer's own
+            // JSON names, and writes words Gossamer reads back as that event.
+            let words = encode(e)
+            assert_eq(carries_texts(words[0]), !texts_of(e).is_empty() || words[0] == 14, "texts beside the words")
+            let core = support::ok(windowing_app::event_json(words.to_vec(), texts_of(e)))?
+            assert_eq(json::render(json::parse(core)?), json::render(json::parse(json::encode(e))?), "Gossamer to the core")
+            let back = support::ok(windowing_app::event_wire(core))?
+            assert_eq(f"{decode(back):?}", f"{Some(e):?}", "the core to Gossamer")
+        }
+        Ok(())
+    }
+}

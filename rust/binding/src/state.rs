@@ -1,6 +1,7 @@
 //! What the binding keeps between calls: the session, and the handles the
 //! Gossamer side holds as ids.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -13,6 +14,12 @@ use gossamer_binding::GosError;
 use parking_lot::Mutex;
 
 static SESSION: Mutex<Option<App>> = Mutex::new(None);
+
+thread_local! {
+    // The session again on the thread that started it, where every event
+    // call runs, read there without the lock.
+    static MAIN: RefCell<Option<App>> = const { RefCell::new(None) };
+}
 static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
 static NEXT_HANDLE: AtomicI64 = AtomicI64::new(1);
 
@@ -66,11 +73,13 @@ static GL: Handles<Sendable<GlContext>> = Handles::new();
 static LISTENERS: Handles<Listener> = Handles::new();
 
 pub(crate) fn install(app: App) {
+    main_slot(|m| *m = Some(app.clone()));
     *WAKER.lock() = Some(app.waker());
     *SESSION.lock() = Some(app);
 }
 
 pub(crate) fn finalize() {
+    main_slot(|m| *m = None);
     WAKER.lock().take();
     let app = SESSION.lock().take();
     if let Some(app) = app {
@@ -91,6 +100,30 @@ pub fn with_app<R>(f: impl FnOnce(&App) -> Result<R, GosError>) -> Result<R, Gos
             "windowing is not running; call windowing::init first",
         )),
     }
+}
+
+/// [`with_app`] for the calls that run only on the thread that started the
+/// session (event pumps and simulation), which read it there without the
+/// lock or a copy. The session stays lent while `f` runs, so a hook a pump
+/// runs cannot start or end one.
+pub fn with_event_app<R>(f: impl FnOnce(&App) -> Result<R, GosError>) -> Result<R, GosError> {
+    MAIN.with(|m| match m.borrow().as_ref() {
+        Some(app) => f(app),
+        None => Err(GosError::from(
+            "windowing is not running on this thread; call windowing::init first",
+        )),
+    })
+}
+
+// Replaces the main thread's session. Starting or ending one inside a hook
+// would change SDL under the pump running the hook.
+fn main_slot(f: impl FnOnce(&mut Option<App>)) {
+    MAIN.with(|m| match m.try_borrow_mut() {
+        Ok(mut slot) => f(&mut slot),
+        Err(_) => panic!(
+            "windowing: a session cannot start or end inside an event hook; do it after the pump returns"
+        ),
+    });
 }
 
 pub(crate) fn waker() -> Option<Waker> {

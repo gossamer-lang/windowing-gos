@@ -25,8 +25,11 @@ events=1000000
 
 "$GOS" build --release . > /dev/null
 gos_bin=./target/release/windowing-measure
-# The SDL the Gossamer build linked: the static archive its cmake step left.
-prefix=$(dirname "$(dirname "$(find .gos-cache -path '*cmake-static-*/prefix/lib/libSDL3.a' | head -n 1)")")
+# The C programs link the SDL the core crate builds, the version and features
+# the binding links, from the output directory Cargo reports for its build.
+prefix=$(cargo build --release --quiet --message-format=json \
+    --manifest-path ../../rust/gos-windowing/Cargo.toml |
+    jq -r 'select(.reason == "build-script-executed" and (.package_id | contains("#sdl3-sys@"))) | .out_dir')
 cflags=$(PKG_CONFIG_PATH="$prefix/lib/pkgconfig" pkg-config --cflags sdl3)
 libs=$(PKG_CONFIG_PATH="$prefix/lib/pkgconfig" pkg-config --static --libs sdl3)
 out=$(mktemp -d)

@@ -1,10 +1,6 @@
-// What every module shares: the main-thread rule, and reading an event the
-// core hands over.
+// What every module shares: the main-thread rule, and the core's errors.
 
 use std::{errors, runtime}
-use std::encoding::json
-
-use crate::event::Event
 
 /// Panics unless the caller is on the thread that started video: SDL and the
 /// platform window systems under it are bound to that thread.
@@ -12,11 +8,6 @@ pub (package) fn require_main_thread(op: String) {
     if !runtime::is_main_thread() {
         panic(f"windowing: `{op}` must run on the main thread; wake it from a goroutine with a Waker")
     }
-}
-
-/// The event the core encoded as `text`.
-pub (package) fn event(text: String) -> Result<Event, errors::Error> {
-    json::decode::<Event>(text).map_err(|e| errors::wrap(e, "reading an event"))
 }
 
 /// A core call's result with its message as an error.
