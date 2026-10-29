@@ -667,7 +667,8 @@ mod bus_process_tests {
     #[test]
     fn concurrent_launches_and_restart_on_real_session_bus() {
         if std::env::var_os("GOS_BUS_GROUP").is_none() {
-            assert!(Command::new("dbus-run-session").arg("--").arg(std::env::current_exe().unwrap())
+            assert!(Command::new("sh").arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/private-bus.sh"))
+                .arg("--").arg(std::env::current_exe().unwrap())
                 .args(["--exact", "instance::bus_process_tests::concurrent_launches_and_restart_on_real_session_bus", "--nocapture"])
                 .env("GOS_BUS_GROUP", "1").status().unwrap().success());
             return;

@@ -8,7 +8,7 @@ out=$(cd "$out" && pwd)
 if [ "${1:-}" != --private ]; then
     (cd "$root/rust/gos-windowing" && cargo build --release --example instance-check --example platform-check) > "$out/build.txt" 2>&1
     case "$(uname -s)" in
-        Linux) WINDOWING_INSTANCE_REPORT="$out" dbus-run-session -- "$0" --private ;;
+        Linux) WINDOWING_INSTANCE_REPORT="$out" sh "$root/tools/private-bus.sh" -- "$0" --private ;;
         *) "$root/rust/gos-windowing/target/release/examples/instance-check" > "$out/native.txt"
            "$root/rust/gos-windowing/target/release/examples/platform-check" > "$out/platform-native.txt" ;;
     esac

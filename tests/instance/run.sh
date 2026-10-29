@@ -11,7 +11,7 @@ export GOS
 "$GOS" build --release . >/dev/null
 status=0
 for tier in vm jit debug release; do
-    out=$(dbus-run-session -- sh -c '
+    out=$(sh ../../tools/private-bus.sh -- sh -c '
         case "$1" in
             vm) run() { GOS_JIT=0 "$GOS" run . "$@"; } ;;
             jit) run() { GOS_JIT=1 GOSSAMER_JIT_THRESHOLD=1 "$GOS" run . "$@"; } ;;

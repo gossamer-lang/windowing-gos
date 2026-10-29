@@ -39,7 +39,7 @@ status=0
 check() {
     label=$1
     shift
-    out=$(dbus-run-session -- sh run.sh --private "$@" 2>/dev/null)
+    out=$(sh ../../tools/private-bus.sh -- sh run.sh --private "$@" 2>/dev/null)
     if echo "$out" | grep -qxF "$first" && echo "$out" | grep -qxF "$second"; then
         echo "  ok    $label"
     else
@@ -78,7 +78,7 @@ x11() {
             jit) probe="env GOS_JIT=1 GOSSAMER_JIT_THRESHOLD=1 $GOS run . x11" ;;
             *) probe="./target/$tier/windowing-preferences x11" ;;
         esac
-        out=$(env SDL_VIDEO_DRIVER=x11 DISPLAY=$screen "$@" dbus-run-session -- sh run.sh --private $probe 2>/dev/null)
+        out=$(env SDL_VIDEO_DRIVER=x11 DISPLAY=$screen "$@" sh ../../tools/private-bus.sh -- sh run.sh --private $probe 2>/dev/null)
         if echo "$out" | grep -qxF "$want"; then
             echo "  ok    x11 $label $tier"
         else
