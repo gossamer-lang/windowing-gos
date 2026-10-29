@@ -13,7 +13,14 @@ if [ "${1:-}" = --private ]; then
     python3 -I portal.py < "$out/commands" > "$out/portal.txt" &
     portal=$!
     exec 3> "$out/commands"
-    until grep -q ready "$out/portal.txt"; do sleep 0.05; done
+    until grep -q ready "$out/portal.txt"; do
+        if ! kill -0 "$portal" 2>/dev/null; then
+            echo "the stand-in portal exited before it was ready"
+            cat "$out/portal.txt"
+            exit 1
+        fi
+        sleep 0.05
+    done
     "$@" > "$out/probe.txt" 2>&1 &
     probe=$!
     until grep -q "^first:" "$out/probe.txt" || ! kill -0 "$probe" 2>/dev/null; do sleep 0.05; done
@@ -90,9 +97,17 @@ settings() {
     fi
     if [ $# -gt 0 ]; then
         ready=$(mktemp)
-        DISPLAY=$screen python3 -I xsettings.py "$@" > "$ready" &
+        DISPLAY=$screen python3 -I xsettings.py "$@" > "$ready" 2>&1 &
         manager=$!
-        until grep -q ready "$ready"; do sleep 0.05; done
+        until grep -q ready "$ready"; do
+            if ! kill -0 "$manager" 2>/dev/null; then
+                echo "  FAIL  the stand-in XSETTINGS manager exited before it was ready"
+                sed 's/^/        /' "$ready"
+                rm -f "$ready"
+                exit 1
+            fi
+            sleep 0.05
+        done
         rm -f "$ready"
     fi
 }

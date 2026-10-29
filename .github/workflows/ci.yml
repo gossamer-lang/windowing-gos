@@ -291,6 +291,13 @@ jobs:
           & 'C:\msys64\mingw64\bin\gcc.exe' -O1 -o uia-client.exe client.c -lole32 -loleaut32 -luuid -luser32
           if ($LASTEXITCODE -ne 0) { throw "building the client failed" }
           .\run.ps1
+      - name: Single-instance foreground handoff (macOS, Windows)
+        if: runner.os != 'Linux'
+        working-directory: rust/gos-windowing
+        shell: bash
+        env:
+          SDL_VIDEO_DRIVER: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
+        run: cargo run --release --example instance-check
 
   # Idle memory, threads and wakeups and event cost, held to budgets set
   # against the same programs written in C on the same runner.

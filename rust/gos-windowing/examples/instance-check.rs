@@ -56,10 +56,60 @@ fn cpu_ns() -> Result<u64> {
     Ok(time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64)
 }
 
+// Windows lets only the process that received the last input event take the
+// foreground, as a launch from the desktop shell does. The secondary stands
+// in for that launch by receiving a hotkey of its own, so the handoff under
+// test starts from the foreground rights a user's launch carries.
+#[cfg(target_os = "windows")]
+fn receive_input() -> Result<()> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, MOD_NOREPEAT, RegisterHotKey,
+        SendInput, UnregisterHotKey, VK_F22,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetMessageW, MSG, WM_HOTKEY};
+    const HOTKEY: i32 = 0xbaba;
+    let key = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_F22,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+    // SAFETY: a null window posts the hotkey to this thread's queue, `inputs`
+    // outlives the call, and `msg` is writable storage for one message.
+    unsafe {
+        if RegisterHotKey(std::ptr::null_mut(), HOTKEY, MOD_NOREPEAT, VK_F22 as u32) == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let sent = SendInput(2, inputs.as_ptr(), size_of::<INPUT>() as i32);
+        let mut msg: MSG = std::mem::zeroed();
+        let received =
+            sent == 2 && GetMessageW(&mut msg, std::ptr::null_mut(), WM_HOTKEY, WM_HOTKEY) > 0;
+        let error = std::io::Error::last_os_error();
+        UnregisterHotKey(std::ptr::null_mut(), HOTKEY);
+        if !received {
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
 fn child(app: &App, id: &str, done: &Path) -> Result<()> {
     let window = show(app, "Secondary launcher")?;
+    #[cfg(target_os = "windows")]
+    receive_input()?;
     window.focus()?;
     pump(app, Duration::from_millis(200))?;
+    #[cfg(target_os = "windows")]
+    if !window.has_focus() {
+        return Err("the secondary launch did not take the foreground".into());
+    }
     #[cfg(target_os = "linux")]
     {
         use std::collections::HashMap;
