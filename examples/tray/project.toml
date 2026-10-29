@@ -1,7 +1,7 @@
 [project]
 id = "dev.gossamer/windowing-tray"
 version = "0.1.0"
-gossamer-version = "^v0.75.6"
+gossamer-version = "^v0.75.7"
 
 [dependencies]
 "github.com/gossamer-lang/windowing-gos" = { path = "../.." }

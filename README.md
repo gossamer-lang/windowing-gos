@@ -52,7 +52,7 @@ fn main() {
 "github.com/gossamer-lang/windowing-gos" = { git = "https://github.com/gossamer-lang/windowing-gos", tag = "v0.1.0" }
 ```
 
-Then run `gos fetch`. You need Gossamer 0.75.6 or later, a Rust toolchain, CMake and a
+Then run `gos fetch`. You need Gossamer 0.75.7 or later, a Rust toolchain, CMake and a
 C compiler.
 The first build compiles SDL once; later builds reuse it. On Linux, install
 the X11 and Wayland development headers first:
