@@ -142,6 +142,8 @@ impl Window {
     pub fn close(&self) {
         support::require_main_thread("Window::close");
         crate::access::detach(self);
+        #[cfg(target_os = "macos")]
+        crate::macos::layer::release(self);
         // SAFETY: handle is a live window on the main thread.
         unsafe { SDL_DestroyWindow(self.handle) }
     }

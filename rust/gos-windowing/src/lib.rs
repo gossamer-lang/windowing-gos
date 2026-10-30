@@ -212,6 +212,8 @@ impl App {
         drag::shutdown();
         system::shutdown();
         win32::shutdown();
+        #[cfg(target_os = "macos")]
+        macos::layer::release_all();
         // Quitting removes the live-resize watch and destroys the property
         // holding its hook, which releases the hook.
         // SAFETY: ends the session on the main thread.

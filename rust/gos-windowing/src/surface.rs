@@ -230,6 +230,18 @@ impl Window {
     /// A zeroed frame matching the window's surface.
     pub fn framebuffer(&self) -> Result<Frame> {
         support::require_main_thread("Window::framebuffer");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            let (width, height) = crate::macos::layer::pixel_size(self);
+            return Ok(Frame {
+                pixels: vec![0u8; (width * 4 * height).max(0) as usize],
+                width,
+                height,
+                stride: width * 4,
+                format: PixelFormat::Bgra8,
+                window: self.id,
+            });
+        }
         let surface = self.window_surface()?;
         Ok(Frame {
             pixels: vec![0u8; (surface.stride * surface.height) as usize],
@@ -244,6 +256,25 @@ impl Window {
     /// Shows `frame`: one copy into the surface the window system displays.
     pub fn present(&self, frame: &Frame) -> Result<()> {
         support::require_main_thread("Window::present");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            let (width, height) = crate::macos::layer::pixel_size(self);
+            if (width, height) != (frame.width, frame.height) || frame.stride != width * 4 {
+                return Err(Error::new(format!(
+                    "the frame is {}x{} but the window is now {width}x{height}; take a new framebuffer after a resize",
+                    frame.width, frame.height
+                )));
+            }
+            return crate::macos::layer::paint(self, &[], |pixels, _, height, stride, _| {
+                for (row, from) in frame.pixels.chunks_exact(frame.stride as usize).enumerate() {
+                    if row as i64 >= height {
+                        break;
+                    }
+                    let at = row * stride as usize;
+                    pixels[at..at + from.len()].copy_from_slice(from);
+                }
+            });
+        }
         let surface = self.window_surface()?;
         if surface.width != frame.width
             || surface.height != frame.height
@@ -274,6 +305,10 @@ impl Window {
         paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
     ) -> Result<()> {
         support::require_main_thread("Window::paint_surface");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            return crate::macos::layer::paint(self, damage, paint);
+        }
         let surface = self.window_surface()?;
         // SAFETY: the surface holds stride * height bytes until the next resize,
         // and nothing else touches it on this thread meanwhile.
@@ -318,6 +353,17 @@ impl Window {
     /// What the window shows now: a copy of its software surface as a frame.
     pub fn capture(&self) -> Result<Frame> {
         support::require_main_thread("Window::capture");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            let mut frame = self.framebuffer()?;
+            if let Some(shown) = crate::macos::layer::capture(self)? {
+                frame.pixels = shown.pixels;
+                frame.width = shown.width;
+                frame.height = shown.height;
+                frame.stride = shown.stride;
+            }
+            return Ok(frame);
+        }
         let mut frame = self.framebuffer()?;
         let surface = self.window_surface()?;
         // SAFETY: the surface holds stride * height bytes.

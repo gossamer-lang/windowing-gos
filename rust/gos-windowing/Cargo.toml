@@ -42,5 +42,8 @@ windows-core = "0.62"
 objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSData", "NSURL", "NSNotification", "NSProcessInfo", "NSBundle", "NSGeometry", "NSObject", "NSUserNotification", "NSError", "block2"] }
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView", "NSResponder", "NSMenu", "NSMenuItem", "NSAppearance", "NSColor", "NSColorSpace", "NSFont", "NSWorkspace", "NSEvent", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSPasteboard", "NSPasteboardItem", "NSImage", "NSGraphicsContext", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSAccessibilityConstants", "objc2-core-foundation"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView", "NSResponder", "NSMenu", "NSMenuItem", "NSAppearance", "NSColor", "NSColorSpace", "NSFont", "NSWorkspace", "NSEvent", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSPasteboard", "NSPasteboardItem", "NSImage", "NSGraphicsContext", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSAccessibilityConstants", "objc2-core-foundation", "objc2-quartz-core"] }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFCGTypes", "CFDictionary", "CFNumber", "CFString"] }
+objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
+objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2-core-foundation"] }
 objc2-user-notifications = { version = "0.3", features = ["UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "block2"] }

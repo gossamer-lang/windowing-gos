@@ -12,7 +12,7 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release CI installs: the one this library requires.
-  GOSSAMER_VERSION: v0.75.7
+  GOSSAMER_VERSION: v0.75.8
   # The video driver for every job that needs no display: SDL's
   # `offscreen` driver keeps windows in memory.
   SDL_VIDEO_DRIVER: offscreen
@@ -298,6 +298,12 @@ jobs:
         env:
           SDL_VIDEO_DRIVER: ${{ runner.os == 'Windows' && 'windows' || 'cocoa' }}
         run: cargo run --release --example instance-check
+      - name: Window surface and platform acceptance (macOS)
+        if: runner.os == 'macOS'
+        working-directory: rust/gos-windowing
+        env:
+          SDL_VIDEO_DRIVER: cocoa
+        run: cargo run --release --example platform-check
 
   # Idle memory, threads and wakeups and event cost, held to budgets set
   # against the same programs written in C on the same runner.

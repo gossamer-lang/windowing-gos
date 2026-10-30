@@ -6,6 +6,8 @@
 mod appkit;
 #[cfg(target_os = "macos")]
 pub(crate) use appkit::*;
+#[cfg(target_os = "macos")]
+pub(crate) mod layer;
 
 #[cfg(not(target_os = "macos"))]
 mod fallback {

@@ -50,6 +50,8 @@ impl Compositor {
         unsafe {
             sdl3_sys::video::SDL_DestroyWindowSurface(window.handle);
         }
+        #[cfg(target_os = "macos")]
+        crate::macos::layer::release(&window);
         let renderer = unsafe {
             SDL_CreateRenderer(
                 window.handle,

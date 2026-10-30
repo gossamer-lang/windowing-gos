@@ -62,6 +62,45 @@ fn run() -> Result<()> {
                 [captured.pixels[r], captured.pixels[g], captured.pixels[b]],
                 [30, 70, 140]
             );
+            // Each quadrant repainted alone, a frame apiece: the window shows
+            // all four, so every frame carried the others' pixels forward.
+            let (w, h) = (captured.width, captured.height);
+            let colors = [[200, 10, 10], [10, 200, 10], [10, 10, 200], [200, 200, 10]];
+            let quadrant = |i: i64| Rect {
+                x: (i % 2) * (w / 2),
+                y: (i / 2) * (h / 2),
+                width: w / 2,
+                height: h / 2,
+            };
+            for (i, color) in (0..).zip(colors) {
+                let q = quadrant(i);
+                window.paint_surface(&[q], |pixels, _, _, stride, format| {
+                    let (r, g, b) = format.rgb_offsets();
+                    for y in q.y..q.y + q.height {
+                        for x in q.x..q.x + q.width {
+                            let at = (y * stride + x * 4) as usize;
+                            pixels[at + r] = color[0];
+                            pixels[at + g] = color[1];
+                            pixels[at + b] = color[2];
+                        }
+                    }
+                })?;
+            }
+            let shown = window.capture()?;
+            let (r, g, b) = shown.format.rgb_offsets();
+            for (i, color) in (0..).zip(colors) {
+                let q = quadrant(i);
+                let at = ((q.y + q.height / 2) * shown.stride + (q.x + q.width / 2) * 4) as usize;
+                assert_eq!(
+                    [
+                        shown.pixels[at + r],
+                        shown.pixels[at + g],
+                        shown.pixels[at + b]
+                    ],
+                    color,
+                    "quadrant {i} after four partial repaints"
+                );
+            }
             window.set_size(400, 240)?;
             let until = Instant::now() + Duration::from_secs(5);
             while window.size() != (400, 240) && Instant::now() < until {
