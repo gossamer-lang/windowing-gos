@@ -296,6 +296,23 @@ impl Window {
         )
     }
 
+    /// Frees the pixels of the window's software surface, which a minimized
+    /// window does not show; the next `paint_surface` makes them again.
+    pub fn release_surface(&self) -> Result<()> {
+        support::require_main_thread("Window::release_surface");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            crate::macos::layer::release(self);
+            return Ok(());
+        }
+        // SAFETY: handle is live on the UI thread; SDL answers true when the
+        // window has no surface.
+        support::check(
+            unsafe { SDL_DestroyWindowSurface(self.handle) },
+            "releasing the window surface",
+        )
+    }
+
     /// Paints straight into the window's surface: `paint` gets its bytes,
     /// width, height, stride and format; then the rectangles `damage` names
     /// (every pixel when empty) are shown.
