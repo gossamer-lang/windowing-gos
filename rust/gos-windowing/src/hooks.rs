@@ -1,12 +1,16 @@
 //! Callbacks SDL runs into the program: a window's hit test, and the redraw
 //! a live resize asks for. Each boxed function lives in a property SDL owns,
 //! with a cleanup SDL runs when the property is replaced or cleared, its
-//! window closes, or the session ends.
+//! window closes, or the session ends. A redraw scoped to one pump lives in
+//! a thread-local slot for the length of that pump instead.
 
+use std::cell::Cell;
 use std::ffi::c_void;
+use std::ptr::NonNull;
 
 use sdl3_sys::events::{
-    SDL_AddEventWatch, SDL_EVENT_WINDOW_EXPOSED, SDL_Event, SDL_RemoveEventWatch,
+    SDL_AddEventWatch, SDL_EVENT_WINDOW_EXPOSED, SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED,
+    SDL_EVENT_WINDOW_RESIZED, SDL_Event, SDL_RemoveEventWatch, SDL_WindowEvent,
 };
 use sdl3_sys::properties::{
     SDL_GetGlobalProperties, SDL_GetPointerProperty, SDL_SetPointerProperty,
@@ -94,9 +98,119 @@ pub(crate) struct LiveResize {
     pub(crate) redraw_type: u32,
 }
 
+type ScopedRedraw = dyn FnMut(Window);
+
+thread_local! {
+    // The redraw `redrawing` installs, with the event type redraws carry.
+    static SCOPED: Cell<Option<(NonNull<ScopedRedraw>, u32)>> = const { Cell::new(None) };
+    // A redraw is running; a pump inside it must not start another.
+    static REDRAWING: Cell<bool> = const { Cell::new(false) };
+    // The library's own wait or poll is pumping events.
+    static PUMPING: Cell<bool> = const { Cell::new(false) };
+}
+
+// Whether `e` asks for a redraw that the platform's loop gives no other
+// chance to paint: the expose a live resize sends while that loop blocks the
+// program, or a size change where the frame is a macOS layer. Cocoa delivers
+// a size change inside the resize's own Core Animation transaction, so a frame
+// painted at once shows together with the new size. SDL's window surface is
+// replaced only after its watches run, so a size change does not ask there.
+fn asks_live_redraw(e: &SDL_WindowEvent) -> bool {
+    if e.r#type == SDL_EVENT_WINDOW_EXPOSED {
+        return e.data1 != 0;
+    }
+    (e.r#type == SDL_EVENT_WINDOW_RESIZED || e.r#type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
+        && paints_on_resize()
+}
+
+#[cfg(target_os = "macos")]
+fn paints_on_resize() -> bool {
+    crate::macos::layer::applies()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn paints_on_resize() -> bool {
+    false
+}
+
+// Runs `redraw` unless a redraw is already running on this thread.
+fn redraw_once(redraw: impl FnOnce()) {
+    if REDRAWING.replace(true) {
+        return;
+    }
+    redraw();
+    REDRAWING.set(false);
+}
+
+/// Runs `pump` with the library's wait or poll marked as pumping events.
+pub(crate) fn pumping<R>(pump: impl FnOnce() -> R) -> R {
+    let outer = PUMPING.replace(true);
+    let answer = pump();
+    PUMPING.set(outer);
+    answer
+}
+
+/// Runs `pump` with `redraw` answering the redraws a live resize asks for
+/// meanwhile.
+pub(crate) fn redrawing<R>(
+    redraw: &mut dyn FnMut(Window),
+    redraw_type: u32,
+    pump: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<(NonNull<ScopedRedraw>, u32)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.set(self.0);
+        }
+    }
+    let borrowed: NonNull<dyn FnMut(Window) + '_> = NonNull::from(redraw);
+    // SAFETY: only the lifetime changes. The slot holds the pointer until
+    // `Restore` drops at the end of this call, while `redraw` stays borrowed.
+    let erased: NonNull<ScopedRedraw> = unsafe { std::mem::transmute(borrowed) };
+    let _restore = Restore(SCOPED.replace(Some((erased, redraw_type))));
+    pump()
+}
+
+// SDL runs event watches for every event, on whatever thread queued it; the
+// slot is set only on the thread pumping inside `redrawing`.
+unsafe extern "C" fn scoped_redraw_entry(_data: *mut c_void, event: *mut SDL_Event) -> bool {
+    if event.is_null() {
+        return true;
+    }
+    // SAFETY: event is a complete SDL event; the window member is read only
+    // for a window event type.
+    let e = unsafe { &(*event).window };
+    if !asks_live_redraw(e) {
+        return true;
+    }
+    let Some((redraw, redraw_type)) = SCOPED.get() else {
+        return true;
+    };
+    let Some(win) = window::from_id(WindowId(e.windowID.0), redraw_type) else {
+        return true;
+    };
+    redraw_once(|| {
+        // SAFETY: the slot holds an exclusive borrow live for the pump this
+        // event came from, and `redraw_once` keeps this the only call into it.
+        unsafe { (*redraw.as_ptr())(win) }
+    });
+    true
+}
+
+/// Installs the watch that serves `redrawing`; quitting SDL removes it.
+pub(crate) fn add_scoped_redraw() -> Result<()> {
+    support::check(
+        // SAFETY: the watch takes no context.
+        unsafe { SDL_AddEventWatch(Some(scoped_redraw_entry), std::ptr::null_mut()) },
+        "installing the live-resize redraw",
+    )
+}
+
 // SDL runs event watches for every event, on whatever thread queued it. The
 // expose a live resize sends comes on the main thread, inside the modal loop
-// the platform runs while the user drags; it is the one this watch serves.
+// the platform runs while the user drags; a size change on a macOS layer asks
+// too while the library's own wait or poll pumps, never from a resize the
+// program makes.
 unsafe extern "C" fn live_resize_entry(data: *mut c_void, event: *mut SDL_Event) -> bool {
     if data.is_null() || event.is_null() {
         return true;
@@ -104,13 +218,17 @@ unsafe extern "C" fn live_resize_entry(data: *mut c_void, event: *mut SDL_Event)
     // SAFETY: event is a complete SDL event; the window member is read only
     // for a window event type.
     let e = unsafe { &(*event).window };
-    if e.r#type != SDL_EVENT_WINDOW_EXPOSED || e.data1 == 0 {
+    if !asks_live_redraw(e) || (e.r#type != SDL_EVENT_WINDOW_EXPOSED && !PUMPING.get()) {
+        return true;
+    }
+    // A redraw scoped to this pump paints the frame instead.
+    if SCOPED.get().is_some() {
         return true;
     }
     // SAFETY: data is the LiveResize the global property keeps alive.
     let live = unsafe { &*data.cast::<LiveResize>() };
     if let Some(win) = window::from_id(WindowId(e.windowID.0), live.redraw_type) {
-        (live.redraw)(win);
+        redraw_once(|| (live.redraw)(win));
     }
     true
 }

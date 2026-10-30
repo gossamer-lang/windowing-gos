@@ -101,13 +101,50 @@ fn run() -> Result<()> {
                     "quadrant {i} after four partial repaints"
                 );
             }
-            window.set_size(400, 240)?;
-            let until = Instant::now() + Duration::from_secs(5);
-            while window.size() != (400, 240) && Instant::now() < until {
-                let _ = window.sync();
-                pump(&app, Duration::from_millis(10))?;
-            }
+            // A size change on a macOS layer is painted from inside the
+            // resize, before any present, at the window's new pixel size.
+            let mut redraws = 0;
+            let resized = app.redrawing(
+                &mut |w: windowing::Window| {
+                    redraws += 1;
+                    let _ = w.paint_surface(&[], |pixels, _, _, _, format| {
+                        let (r, g, b) = format.rgb_offsets();
+                        for px in pixels.as_chunks_mut::<4>().0 {
+                            px[r] = 220;
+                            px[g] = 130;
+                            px[b] = 40;
+                        }
+                    });
+                },
+                || -> Result<()> {
+                    window.set_size(400, 240)?;
+                    let until = Instant::now() + Duration::from_secs(5);
+                    while window.size() != (400, 240) && Instant::now() < until {
+                        let _ = window.sync();
+                        pump(&app, Duration::from_millis(10))?;
+                    }
+                    Ok(())
+                },
+            );
+            resized?;
             assert_eq!(window.size(), (400, 240));
+            if cfg!(target_os = "macos") {
+                assert!(redraws > 0, "no redraw ran for the size change");
+                let shown = window.capture()?;
+                let (w, h) = (shown.width, shown.height);
+                assert_eq!((w, h), window.pixel_size(), "redrawn frame size");
+                let (r, g, b) = shown.format.rgb_offsets();
+                let at = ((h - 1) * shown.stride + (w - 1) * 4) as usize;
+                assert_eq!(
+                    [
+                        shown.pixels[at + r],
+                        shown.pixels[at + g],
+                        shown.pixels[at + b]
+                    ],
+                    [220, 130, 40],
+                    "the grown corner after the redraw"
+                );
+            }
             assert!(
                 window.present(&old).is_err(),
                 "old framebuffer accepted after resize"
@@ -151,6 +188,9 @@ fn run() -> Result<()> {
             assert!(app.window_by_id(id).is_none());
         }
         println!("PASS 12 create/resize/stale-frame/hide/show/destroy lifetimes");
+        if cfg!(target_os = "macos") {
+            println!("PASS a size change redrawn from inside the resize");
+        }
         Ok(())
     })();
     app.finalize();

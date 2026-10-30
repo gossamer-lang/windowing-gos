@@ -154,6 +154,11 @@ pub fn init(name: &str, options: &InitOptions) -> Result<App> {
     }
     system::PREFERENCES_EVENT_TYPE.store(base + event::PREFERENCES_OFFSET, Ordering::Release);
     access::set_wake_event(base + event::WAKE_OFFSET);
+    if let Err(e) = hooks::add_scoped_redraw() {
+        // SAFETY: undoes the init above.
+        unsafe { SDL_Quit() };
+        return Err(e);
+    }
     Ok(App {
         event_base: base,
         pending_wake: Arc::new(AtomicBool::new(false)),
@@ -259,7 +264,7 @@ impl App {
         let mut e = new_event();
         loop {
             // SAFETY: e is valid storage SDL fills.
-            if !unsafe { SDL_WaitEventTimeout(&mut e, -1) } {
+            if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, -1) }) {
                 return Err(support::failure("waiting for events"));
             }
             if let Some(event) = self.take(&e) {
@@ -280,7 +285,7 @@ impl App {
             }
             let slice = support::c_int(left, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
-            if !unsafe { SDL_WaitEventTimeout(&mut e, slice) } {
+            if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {
                 return Ok(None);
             }
             if let Some(event) = self.take(&e) {
@@ -295,7 +300,7 @@ impl App {
         support::require_main_thread("App::poll");
         let mut e = new_event();
         // SAFETY: e is valid storage SDL fills.
-        while unsafe { SDL_PollEvent(&mut e) } {
+        while hooks::pumping(|| unsafe { SDL_PollEvent(&mut e) }) {
             if let Some(event) = self.take(&e) {
                 return Some(event);
             }
@@ -327,7 +332,9 @@ impl App {
 
     /// Calls `redraw` with the window being resized while the user drags its
     /// border, on Windows and macOS, where the system runs a loop of its own
-    /// until the drag ends and `wait` does not return meanwhile.
+    /// until the drag ends and `wait` does not return meanwhile. On macOS it
+    /// also runs for each size change during a `wait` or `poll`, so the frame
+    /// it paints shows together with the new size.
     pub fn on_live_resize(&mut self, redraw: Box<dyn Fn(Window) + Send>) -> Result<()> {
         support::require_main_thread("App::on_live_resize");
         self.clear_live_resize()?;
@@ -335,6 +342,16 @@ impl App {
             redraw,
             redraw_type: self.event_base + event::REDRAW_OFFSET,
         })
+    }
+
+    /// Runs `pump`, typically a `wait`, `wait_timeout` or `poll`, with
+    /// `redraw` painting the window a live resize changes meanwhile, as
+    /// `on_live_resize` does, but borrowing the caller's state for just this
+    /// pump. It takes the place of the `on_live_resize` hook while it runs,
+    /// and a redraw that pumps again starts no second redraw.
+    pub fn redrawing<R>(&self, redraw: &mut dyn FnMut(Window), pump: impl FnOnce() -> R) -> R {
+        support::require_main_thread("App::redrawing");
+        hooks::redrawing(redraw, self.event_base + event::REDRAW_OFFSET, pump)
     }
 
     /// Removes the live-resize hook.
