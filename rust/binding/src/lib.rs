@@ -154,6 +154,7 @@ mod app_bindings {
             },
         )
         .map_err(fail)?;
+        gos_windowing::idle::set_thread_idle(gossamer_binding::mark_thread_idle);
         state::install(app);
         Ok(())
     }

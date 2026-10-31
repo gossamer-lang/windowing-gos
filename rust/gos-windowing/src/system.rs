@@ -174,6 +174,22 @@ pub(crate) fn shutdown() {
     prefs::stop();
 }
 
+/// Whether the desktop says assistive technology, such as a screen reader,
+/// is on. From the first call on, the session watches the switch, and
+/// `Event::PreferencesChanged` says to ask again. Only Linux desktops have
+/// such a switch; elsewhere a reader announces itself to the window.
+pub fn assistive_technology() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        prefs::watch();
+        prefs::assistive_technology()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 // An sRGB channel from a component in 0..1; `None` outside it, which the
 // desktop portal uses for no accent.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -216,8 +232,39 @@ mod prefs {
     ];
 
     struct Watch {
-        connection: Connection,
         thread: JoinHandle<()>,
+    }
+
+    const A11Y_SERVICE: &str = "org.a11y.Bus";
+    const A11Y_PATH: &str = "/org/a11y/bus";
+    const A11Y_STATUS: &str = "org.a11y.Status";
+    const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
+    // The switches screen readers and other assistive technology turn on.
+    const A11Y_SWITCHES: [&str; 2] = ["IsEnabled", "ScreenReaderEnabled"];
+
+    static ASSISTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Whether the desktop's accessibility service says assistive technology
+    /// is on; a desktop without the service answers no.
+    pub(super) fn assistive_technology() -> bool {
+        ASSISTIVE.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn read_assistive(connection: &Connection) -> bool {
+        A11Y_SWITCHES.iter().any(|switch| {
+            connection
+                .call_method(
+                    Some(A11Y_SERVICE),
+                    A11Y_PATH,
+                    Some(PROPERTIES),
+                    "Get",
+                    &(A11Y_STATUS, *switch),
+                )
+                .ok()
+                .and_then(|reply| reply.body().deserialize::<OwnedValue>().ok())
+                .and_then(|value| bool::try_from(value).ok())
+                .unwrap_or(false)
+        })
     }
 
     static WATCH: Mutex<Option<Watch>> = Mutex::new(None);
@@ -290,7 +337,7 @@ mod prefs {
     }
 
     pub(super) fn read() -> Preferences {
-        let Ok(connection) = Connection::session() else {
+        let Some(connection) = crate::bus::session() else {
             return Preferences::default();
         };
         let high_contrast = choice(setting(
@@ -349,51 +396,151 @@ mod prefs {
     }
 
     // Subscribes before the first read, on the calling thread, so no change
-    // falls between the two; the thread then reads the signals.
+    // falls between the two; the thread then reads the signals: the portal's
+    // settings and the desktop's accessibility switch, on the shared bus.
     pub(super) fn watch() {
         let mut watch = WATCH.lock();
         if watch.is_some() {
             return;
         }
-        let Ok(connection) = Connection::session() else {
+        let Some(connection) = crate::bus::session() else {
             return;
         };
-        let Ok(rule) = zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .interface(INTERFACE)
-            .and_then(|b| b.member("SettingChanged"))
-            .map(|b| b.build())
-        else {
+        let signals = MessageIterator::from(&connection);
+        let rules = [
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(INTERFACE)
+                .and_then(|b| b.member("SettingChanged"))
+                .map(|b| b.build()),
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .path(A11Y_PATH)
+                .and_then(|b| b.interface(PROPERTIES))
+                .and_then(|b| b.member("PropertiesChanged"))
+                .and_then(|b| b.add_arg(A11Y_STATUS))
+                .map(|b| b.build()),
+        ];
+        let Ok(bus) = zbus::blocking::fdo::DBusProxy::new(&connection) else {
             return;
         };
-        let Ok(signals) = MessageIterator::for_match_rule(rule, &connection, Some(16)) else {
-            return;
-        };
+        for rule in rules.into_iter().flatten() {
+            let _ = bus.add_match_rule(rule);
+        }
+        ASSISTIVE.store(
+            read_assistive(&connection),
+            std::sync::atomic::Ordering::Release,
+        );
+        let reader = connection.clone();
         let thread = std::thread::Builder::new()
             .name("windowing-preferences".into())
             .spawn(move || {
                 for message in signals {
                     let Ok(message) = message else { break };
-                    let namespace: Option<String> = message
-                        .body()
-                        .deserialize::<(String, String, OwnedValue)>()
-                        .ok()
-                        .map(|b| b.0);
-                    if namespace.is_some_and(|n| WATCHED.contains(&n.as_str())) {
-                        changed();
+                    let header = message.header();
+                    let member = header.member().map(|m| m.as_str().to_string());
+                    match member.as_deref() {
+                        Some("SettingChanged") => {
+                            let namespace: Option<String> = message
+                                .body()
+                                .deserialize::<(String, String, OwnedValue)>()
+                                .ok()
+                                .map(|b| b.0);
+                            if namespace.is_some_and(|n| WATCHED.contains(&n.as_str())) {
+                                changed();
+                            }
+                        }
+                        Some("PropertiesChanged")
+                            if header.path().is_some_and(|p| p.as_str() == A11Y_PATH) =>
+                        {
+                            let on = read_assistive(&reader);
+                            let was = ASSISTIVE.swap(on, std::sync::atomic::Ordering::AcqRel);
+                            if on != was {
+                                changed();
+                            }
+                        }
+                        _ => {}
                     }
                 }
             });
         if let Ok(thread) = thread {
-            *watch = Some(Watch { connection, thread });
+            *watch = Some(Watch { thread });
         }
     }
 
     pub(super) fn stop() {
         let Some(w) = WATCH.lock().take() else { return };
-        // Closing the connection ends the signal stream, which ends the thread.
-        let _ = zbus::block_on(w.connection.inner().clone().close());
+        // Closing the shared connection ends the signal stream, which ends
+        // the thread.
+        crate::bus::close();
         let _ = w.thread.join();
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Child, Command, Stdio};
+
+        use super::*;
+
+        // A message bus of the test's own, killed when it is dropped.
+        struct Bus(Child, String);
+
+        impl Bus {
+            fn start() -> Bus {
+                let mut daemon = Command::new("dbus-daemon")
+                    .args(["--session", "--nofork", "--print-address=1"])
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .expect("dbus-daemon runs");
+                let mut address = String::new();
+                BufReader::new(daemon.stdout.take().expect("piped stdout"))
+                    .read_line(&mut address)
+                    .expect("the daemon prints its address");
+                Bus(daemon, address.trim().to_string())
+            }
+
+            fn connect(&self) -> Connection {
+                zbus::blocking::connection::Builder::address(self.1.as_str())
+                    .and_then(|b| b.build())
+                    .expect("a connection to the test bus")
+            }
+        }
+
+        impl Drop for Bus {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        #[test]
+        fn the_accessibility_switch_reads_as_the_desktop_service_reports_it() {
+            let bus = Bus::start();
+            let client = bus.connect();
+            // No service on the bus: no assistive technology.
+            assert!(!read_assistive(&client));
+            let service = bus.connect();
+            service
+                .request_name(A11Y_SERVICE)
+                .expect("the service name");
+            let calls = MessageIterator::from(&service);
+            let replies = service.clone();
+            let server = std::thread::spawn(move || {
+                for call in calls.flatten() {
+                    let header = call.header();
+                    if header.member().is_some_and(|m| m == "Get") {
+                        let switch: (String, String) =
+                            call.body().deserialize().expect("a property");
+                        let on = Value::from(switch.1 == "ScreenReaderEnabled");
+                        let _ = replies.reply(&header, &on);
+                    }
+                }
+            });
+            assert!(read_assistive(&client));
+            let _ = service.close();
+            server.join().expect("the service ends");
+        }
     }
 }
 

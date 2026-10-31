@@ -9,6 +9,8 @@
 pub mod access;
 #[cfg(target_os = "macos")]
 mod axmac;
+#[cfg(target_os = "linux")]
+pub mod bus;
 pub mod capabilities;
 pub mod clipboard;
 pub mod compositor;
@@ -20,6 +22,7 @@ mod error;
 pub mod event;
 mod frame;
 mod hooks;
+pub mod idle;
 pub mod instance;
 pub mod keys;
 mod macos;
@@ -258,13 +261,19 @@ impl App {
     }
 
     /// Waits for the next event, without a timeout. The wait sits in the
-    /// platform's own wait, so an idle loop takes no CPU.
+    /// platform's own wait, so an idle loop takes no CPU, and hands the
+    /// thread's freed memory back first.
     pub fn wait(&self) -> Result<Event> {
         support::require_main_thread("App::wait");
         let mut e = new_event();
         loop {
+            let slice = idle::thread_idle().map_or(-1, idle::millis);
+            let slice = support::c_int(slice, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
-            if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, -1) }) {
+            if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {
+                if slice >= 0 {
+                    continue;
+                }
                 return Err(support::failure("waiting for events"));
             }
             if let Some(event) = self.take(&e) {
@@ -283,9 +292,13 @@ impl App {
             if left < 0 {
                 return Ok(None);
             }
-            let slice = support::c_int(left, "a wait timeout")?;
+            let bound = idle::thread_idle().map_or(left, |due| idle::millis(due).min(left));
+            let slice = support::c_int(bound, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
             if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {
+                if bound < left {
+                    continue;
+                }
                 return Ok(None);
             }
             if let Some(event) = self.take(&e) {

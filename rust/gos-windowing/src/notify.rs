@@ -136,8 +136,8 @@ fn send_linux(name: &str, notification: &Notification) -> Result<()> {
 
     use zbus::zvariant::Value;
 
-    let connection = zbus::blocking::Connection::session()
-        .map_err(|e| crate::Error::new(format!("the session bus is unavailable: {e}")))?;
+    let connection =
+        crate::bus::session().ok_or_else(|| crate::Error::new("the session bus is unavailable"))?;
     let urgency: u8 = match notification.urgency {
         Urgency::Low => 0,
         Urgency::Normal => 1,

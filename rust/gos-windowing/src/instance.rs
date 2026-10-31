@@ -353,7 +353,7 @@ mod linux {
             return Err(Error::new("claiming an application needs its app_id"));
         }
         let connection =
-            Connection::session().map_err(|_| Error::new("the session bus is unavailable"))?;
+            crate::bus::session().ok_or_else(|| Error::new("the session bus is unavailable"))?;
         let path = object_path(app_id);
         let queue = Arc::new(Mutex::new(Vec::new()));
         let waker = Arc::new(Mutex::new(None));
@@ -366,40 +366,51 @@ mod linux {
             )
             .map_err(|e| Error::new(format!("creating the request signal: {e}")))?,
         );
-        // The object is served before the name is claimed, so a launch racing
-        // this one finds it answering.
-        connection
-            .object_server()
-            .at(
-                path.as_str(),
-                Application {
-                    queue: queue.clone(),
-                    changed: changed.clone(),
-                    closed: closed.clone(),
-                    ready: ready.clone(),
-                    waker: waker.clone(),
-                },
-            )
-            .map_err(bus_error)?;
+        let application = || Application {
+            queue: queue.clone(),
+            changed: changed.clone(),
+            closed: closed.clone(),
+            ready: ready.clone(),
+            waker: waker.clone(),
+        };
+        // The connection is the process's shared one, which outlives a claim
+        // that forwards: such a claim withdraws the object it served.
+        let withdraw = |served: bool| {
+            if served {
+                let _ = connection
+                    .object_server()
+                    .remove::<Application, _>(path.as_str());
+            }
+        };
         loop {
+            // The object is served before the name is claimed, so a launch
+            // racing this one finds it answering. An object already at the
+            // path is this process's own primary claim, which the request
+            // reaches through the bus like any other launch's.
+            let served = connection
+                .object_server()
+                .at(path.as_str(), application())
+                .map_err(bus_error)?;
             // zbus reports a name another peer owns as `NameTaken`, not as a reply.
-            let primary = match connection
-                .request_name_with_flags(app_id, RequestNameFlags::DoNotQueue.into())
-            {
-                Ok(reply) => matches!(
-                    reply,
-                    RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner
-                ),
-                Err(zbus::Error::NameTaken) => false,
-                Err(_) => {
-                    return Err(Error::new(format!(
-                        "the session bus refused the name {app_id}"
-                    )));
-                }
-            };
+            let primary = served
+                && match connection
+                    .request_name_with_flags(app_id, RequestNameFlags::DoNotQueue.into())
+                {
+                    Ok(reply) => matches!(
+                        reply,
+                        RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner
+                    ),
+                    Err(zbus::Error::NameTaken) => false,
+                    Err(_) => {
+                        withdraw(served);
+                        return Err(Error::new(format!(
+                            "the session bus refused the name {app_id}"
+                        )));
+                    }
+                };
             if primary {
                 return Ok(Claim::Primary(Listener {
-                    connection,
+                    connection: connection.clone(),
                     queue,
                     changed,
                     closed,
@@ -435,6 +446,7 @@ mod linux {
                     &(uris, platform),
                 ),
             };
+            withdraw(served);
             match answered {
                 Ok(_) => return Ok(Claim::Forwarded),
                 Err(zbus::Error::MethodError(name, _, _))
