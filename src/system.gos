@@ -76,6 +76,34 @@ pub struct Preferences {
     pub text_scale: Option<f64>
     /// The size in points of the font the desktop draws its menus in.
     pub menu_font_size: Option<f64>
+    /// The size in points of the font the desktop draws its interface text in.
+    #[default]
+    pub font_size: Option<f64>
+}
+
+/// The fixed-width font the desktop names for terminals and code.
+#[derive(Debug, Default, PartialEq)]
+pub struct MonospaceFont {
+    pub family: String
+    /// The size in points.
+    pub size: f64
+    /// The weight on the CSS scale (400 regular, 700 bold).
+    pub weight: i64
+}
+
+/// Plays the desktop's alert sound, as a terminal bell does; answers whether
+/// a sound was started.
+pub fn beep() -> bool {
+    windowing_desktop::system_beep()
+}
+
+/// The fixed-width font the desktop names, where it names one: GNOME's and
+/// KDE's settings on Linux. Other platforms leave the choice to the
+/// application.
+pub fn monospace_font() -> Option<MonospaceFont> {
+    let text = windowing_desktop::system_monospace_font()
+    if text.is_empty() { return None }
+    json::decode::<MonospaceFont>(text).ok()
 }
 
 /// The desktop's preferences now. From the first call on, the session

@@ -370,6 +370,7 @@ pub(crate) fn preferences() -> crate::system::Preferences {
         accent: accent(),
         text_scale: None,
         menu_font_size: Some(NSFont::menuFontOfSize(0.0).pointSize()),
+        font_size: Some(NSFont::systemFontSize()),
     }
 }
 

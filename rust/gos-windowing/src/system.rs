@@ -142,6 +142,19 @@ pub struct Preferences {
     pub text_scale: Option<f64>,
     /// The size in points of the font the desktop draws its menus in.
     pub menu_font_size: Option<f64>,
+    /// The size in points of the font the desktop draws its interface text in.
+    #[serde(default)]
+    pub font_size: Option<f64>,
+}
+
+/// The fixed-width font the desktop names for terminals and code.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MonospaceFont {
+    pub family: String,
+    /// The size in points.
+    pub size: f64,
+    /// The weight on the CSS scale (400 regular, 700 bold).
+    pub weight: i64,
 }
 
 /// The point size a Pango font description ends with (`Cantarell 11`,
@@ -156,6 +169,140 @@ pub fn pango_font_points(description: &str) -> Option<f64> {
 pub fn qt_font_points(description: &str) -> Option<f64> {
     let size: f64 = description.split(',').nth(1)?.trim().parse().ok()?;
     (size > 0.0).then_some(size)
+}
+
+/// The family, size and weight a Pango font description names (`Source
+/// Code Pro Medium 10` is Source Code Pro at 10 points, weight 500); the
+/// style words before the size are not part of the family.
+pub fn pango_font(description: &str) -> Option<MonospaceFont> {
+    // Pango's style words, with the weight each names; 0 for a slant.
+    const STYLES: [(&str, i64); 18] = [
+        ("thin", 100),
+        ("ultra-light", 200),
+        ("extra-light", 200),
+        ("light", 300),
+        ("semi-light", 350),
+        ("book", 380),
+        ("regular", 400),
+        ("normal", 400),
+        ("medium", 500),
+        ("semi-bold", 600),
+        ("demi-bold", 600),
+        ("bold", 700),
+        ("ultra-bold", 800),
+        ("extra-bold", 800),
+        ("heavy", 900),
+        ("black", 900),
+        ("italic", 0),
+        ("oblique", 0),
+    ];
+    let size = pango_font_points(description)?;
+    let mut words: Vec<&str> = description.split_whitespace().collect();
+    words.pop();
+    let mut weight = 400;
+    while words.len() > 1 {
+        let Some(&(_, w)) = words.last().and_then(|word| {
+            let word = word.to_lowercase();
+            STYLES.iter().find(|(name, _)| *name == word)
+        }) else {
+            break;
+        };
+        if w > 0 {
+            weight = w;
+        }
+        words.pop();
+    }
+    let family = words.join(" ").trim_end_matches(',').trim().to_string();
+    (!family.is_empty()).then_some(MonospaceFont {
+        family,
+        size,
+        weight,
+    })
+}
+
+/// The family, size and weight a Qt font string names: its first, second
+/// and fifth fields. Qt 6 writes the weight on the CSS scale and more than
+/// ten fields; Qt 5 on its own scale of 0 to 99, where 50 is regular.
+pub fn qt_font(description: &str) -> Option<MonospaceFont> {
+    let fields: Vec<&str> = description.split(',').map(str::trim).collect();
+    let family = fields.first()?.to_string();
+    let size = qt_font_points(description)?;
+    let weight = match fields.get(4).and_then(|w| w.parse::<i64>().ok()) {
+        Some(w) if fields.len() > 10 && (1..=1000).contains(&w) => w,
+        Some(w) if (0..=99).contains(&w) => qt5_weight(w),
+        _ => 400,
+    };
+    (!family.is_empty()).then_some(MonospaceFont {
+        family,
+        size,
+        weight,
+    })
+}
+
+// A Qt 5 weight on the CSS scale, by the nearest of Qt's named weights.
+fn qt5_weight(w: i64) -> i64 {
+    const NAMED: [(i64, i64); 9] = [
+        (0, 100),
+        (12, 200),
+        (25, 300),
+        (50, 400),
+        (57, 500),
+        (63, 600),
+        (75, 700),
+        (81, 800),
+        (87, 900),
+    ];
+    NAMED
+        .iter()
+        .min_by_key(|(qt, _)| (qt - w).abs())
+        .map_or(400, |&(_, css)| css)
+}
+
+/// The fixed-width font the desktop names, where it names one: GNOME's and
+/// KDE's settings on Linux. Other platforms leave the choice to the
+/// application.
+pub fn monospace_font() -> Option<MonospaceFont> {
+    prefs::monospace_font()
+}
+
+/// Plays the desktop's alert sound, as a terminal bell does; answers whether
+/// a sound was started.
+pub fn beep() -> bool {
+    alert_sound()
+}
+
+#[cfg(target_os = "macos")]
+fn alert_sound() -> bool {
+    objc2_app_kit::NSBeep();
+    true
+}
+
+#[cfg(target_os = "windows")]
+fn alert_sound() -> bool {
+    use windows_sys::Win32::System::Diagnostics::Debug::MessageBeep;
+    use windows_sys::Win32::UI::WindowsAndMessaging::MB_OK;
+    // SAFETY: MessageBeep takes a style value and has no other preconditions.
+    unsafe { MessageBeep(MB_OK) != 0 }
+}
+
+// The freedesktop sound theme's bell, through libcanberra's player or
+// PulseAudio's, whichever the desktop has; the player runs on its own.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn alert_sound() -> bool {
+    use std::process::{Command, Stdio};
+    let players: [(&str, &[&str]); 2] = [
+        ("canberra-gtk-play", &["--id=bell"]),
+        ("paplay", &["/usr/share/sounds/freedesktop/stereo/bell.oga"]),
+    ];
+    players.iter().any(|(program, args)| {
+        Command::new(program)
+            .args(*args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+    })
 }
 
 // The event type `Event::PreferencesChanged` arrives as, set by `init`; 0 before.
@@ -386,13 +533,32 @@ mod prefs {
                 text("org.kde.kdeglobals.General", "menuFont")
                     .and_then(|font| super::qt_font_points(&font))
             });
+        let font_size = text("org.gnome.desktop.interface", "font-name")
+            .and_then(|name| super::pango_font_points(&name))
+            .or_else(|| {
+                text("org.kde.kdeglobals.General", "font")
+                    .and_then(|font| super::qt_font_points(&font))
+            });
         Preferences {
             high_contrast,
             reduced_motion,
             accent,
             text_scale,
             menu_font_size,
+            font_size,
         }
+    }
+
+    pub(super) fn monospace_font() -> Option<super::MonospaceFont> {
+        let connection = crate::bus::session()?;
+        let text = |namespace: &str, key: &str| {
+            setting(&connection, namespace, key).and_then(|v| String::try_from(v).ok())
+        };
+        text("org.gnome.desktop.interface", "monospace-font-name")
+            .and_then(|name| super::pango_font(&name))
+            .or_else(|| {
+                text("org.kde.kdeglobals.General", "fixed").and_then(|font| super::qt_font(&font))
+            })
     }
 
     // Subscribes before the first read, on the calling thread, so no change
@@ -888,11 +1054,31 @@ mod prefs {
             accent,
             text_scale,
             menu_font_size: menu_font_size(),
+            font_size: message_font_size(),
         }
     }
 
-    // The menu font's height at 96 DPI, where a point is 96/72 pixels.
+    pub(super) fn monospace_font() -> Option<super::MonospaceFont> {
+        None
+    }
+
+    // The menu font's size, from its height at 96 DPI, where a point is 96/72
+    // pixels.
     fn menu_font_size() -> Option<f64> {
+        let (read, metrics) = nonclient_metrics();
+        let height = metrics.lfMenuFont.lfHeight.unsigned_abs();
+        (read && height > 0).then(|| f64::from(height) * 72.0 / 96.0)
+    }
+
+    // The message font's size, which dialogs and controls use.
+    fn message_font_size() -> Option<f64> {
+        let (read, metrics) = nonclient_metrics();
+        let height = metrics.lfMessageFont.lfHeight.unsigned_abs();
+        (read && height > 0).then(|| f64::from(height) * 72.0 / 96.0)
+    }
+
+    // The window metrics at 96 DPI, and whether the system answered.
+    fn nonclient_metrics() -> (bool, NONCLIENTMETRICSW) {
         // SAFETY: NONCLIENTMETRICSW is plain data; all zeroes is a valid value.
         let mut metrics: NONCLIENTMETRICSW = unsafe { std::mem::zeroed() };
         metrics.cbSize = std::mem::size_of::<NONCLIENTMETRICSW>() as u32;
@@ -906,8 +1092,7 @@ mod prefs {
                 96,
             )
         };
-        let height = metrics.lfMenuFont.lfHeight.unsigned_abs();
-        (read != 0 && height > 0).then(|| f64::from(height) * 72.0 / 96.0)
+        (read != 0, metrics)
     }
 
     unsafe extern "C" fn on_message(_userdata: *mut c_void, message: *mut MSG) -> bool {
@@ -946,6 +1131,10 @@ mod prefs {
         crate::macos::preferences()
     }
 
+    pub(super) fn monospace_font() -> Option<super::MonospaceFont> {
+        None
+    }
+
     pub(super) fn watch() {
         crate::macos::watch_preferences();
     }
@@ -961,6 +1150,10 @@ mod prefs {
         Preferences::default()
     }
 
+    pub(super) fn monospace_font() -> Option<super::MonospaceFont> {
+        None
+    }
+
     pub(super) fn watch() {}
 
     pub(super) fn stop() {}
@@ -968,7 +1161,7 @@ mod prefs {
 
 #[cfg(test)]
 mod tests {
-    use super::{pango_font_points, qt_font_points};
+    use super::{MonospaceFont, pango_font, pango_font_points, qt_font, qt_font_points};
 
     #[test]
     fn desktop_font_descriptions_give_their_point_size() {
@@ -978,5 +1171,42 @@ mod tests {
         assert_eq!(qt_font_points("Noto Sans,10,-1,5,50,0,0,0,0,0"), Some(10.0));
         assert_eq!(qt_font_points("Noto Sans"), None);
         assert_eq!(qt_font_points("Noto Sans,-1,12,5,50"), None);
+    }
+
+    #[test]
+    fn desktop_font_descriptions_give_their_family_without_its_style() {
+        let font = |family: &str, size: f64, weight: i64| {
+            Some(MonospaceFont {
+                family: family.to_string(),
+                size,
+                weight,
+            })
+        };
+        assert_eq!(pango_font("Monospace 11"), font("Monospace", 11.0, 400));
+        assert_eq!(
+            pango_font("Source Code Pro Medium 10"),
+            font("Source Code Pro", 10.0, 500)
+        );
+        assert_eq!(
+            pango_font("Ubuntu Mono Bold Italic 13"),
+            font("Ubuntu Mono", 13.0, 700)
+        );
+        assert_eq!(pango_font("Lilex Light 10"), font("Lilex", 10.0, 300));
+        assert_eq!(pango_font("Bold 10"), font("Bold", 10.0, 400));
+        assert_eq!(pango_font("Noto Sans,  10"), font("Noto Sans", 10.0, 400));
+        assert_eq!(pango_font("11"), None);
+        assert_eq!(
+            qt_font("Hack,10,-1,5,50,0,0,0,0,0"),
+            font("Hack", 10.0, 400)
+        );
+        assert_eq!(
+            qt_font("Hack,10,-1,5,25,0,0,0,0,0"),
+            font("Hack", 10.0, 300)
+        );
+        assert_eq!(
+            qt_font("Hack,10,-1,5,500,0,0,0,0,0,0,0,0,0,0,1"),
+            font("Hack", 10.0, 500)
+        );
+        assert_eq!(qt_font(",10,-1"), None);
     }
 }

@@ -993,6 +993,17 @@ mod desktop_bindings {
         to_json(&system::preferences())
     }
 
+    pub fn system_beep() -> bool {
+        system::beep()
+    }
+
+    // Empty where the desktop names no font.
+    pub fn system_monospace_font() -> String {
+        system::monospace_font()
+            .map(|font| to_json(&font))
+            .unwrap_or_default()
+    }
+
     // ---- accessibility ----
 
     pub fn access_update(window_id: i64, elements: String) -> Result<(), GosError> {
