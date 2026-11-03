@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - Gossamer 0.75.16
+
+- Requires Gossamer 0.75.16 or later.
+
 ## 0.1.1 - Desktop fonts and bell
 
 - `system::preferences` reports the desktop's interface font size.
