@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 - Gossamer 0.75.17
+
+- Requires Gossamer 0.75.17 or later.
+
 ## 0.1.2 - Gossamer 0.75.16
 
 - Requires Gossamer 0.75.16 or later.

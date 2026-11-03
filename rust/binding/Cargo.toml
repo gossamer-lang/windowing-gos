@@ -1,6 +1,6 @@
 [package]
 name = "windowing-binding"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 publish = false
 
@@ -10,7 +10,7 @@ publish = false
 crate-type = ["rlib"]
 
 [dependencies]
-gossamer-binding = "0.75.16"
+gossamer-binding = "0.75.17"
 gos-windowing = { path = "../gos-windowing" }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
