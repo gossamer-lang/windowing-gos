@@ -716,6 +716,8 @@ impl App {
             Event::PreferencesChanged => {
                 waker::push_user_event(base + event::PREFERENCES_OFFSET, 0, 0, 0, 0)
             }
+            Event::Hotkey { hotkey } => crate::hotkey::press(hotkey.0),
+            Event::HotkeyFailed { hotkey, reason } => crate::hotkey::refuse(hotkey.0, reason),
             Event::DisplayAdded { display } => display_event(SDL_EVENT_DISPLAY_ADDED, display, 0),
             Event::DisplayRemoved { display } => {
                 display_event(SDL_EVENT_DISPLAY_REMOVED, display, 0)

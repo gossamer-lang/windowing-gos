@@ -386,8 +386,29 @@ impl Window {
 
     pub fn show(&self) -> Result<()> {
         support::require_main_thread("Window::show");
+        // X11 window managers forget a withdrawn window's state, and SDL maps
+        // it again without restating it.
+        #[cfg(target_os = "linux")]
+        if !self.is_visible()
+            && let Ok(crate::surface::RawHandle::Xlib {
+                display, window, ..
+            }) = self.raw_handle()
+        {
+            crate::xlib::prepare_map(display, window, self.kept_states())?;
+        }
         // SAFETY: handle is live.
         support::check(unsafe { SDL_ShowWindow(self.handle) }, "showing the window")
+    }
+
+    #[cfg(target_os = "linux")]
+    fn kept_states(&self) -> crate::xlib::States {
+        crate::xlib::States {
+            above: self.flag(SDL_WINDOW_ALWAYS_ON_TOP),
+            utility: self.flag(SDL_WINDOW_UTILITY),
+            maximized: self.flag(SDL_WINDOW_MAXIMIZED),
+            fullscreen: self.flag(SDL_WINDOW_FULLSCREEN),
+            modal: self.flag(SDL_WINDOW_MODAL),
+        }
     }
 
     pub fn hide(&self) -> Result<()> {
@@ -396,9 +417,27 @@ impl Window {
         support::check(unsafe { SDL_HideWindow(self.handle) }, "hiding the window")
     }
 
-    /// Raises the window and asks for input focus.
+    /// Raises the window and asks for input focus, entitled by the latest
+    /// input the application received, a hotkey press included.
     pub fn focus(&self) -> Result<()> {
         support::require_main_thread("Window::focus");
+        // SDL asks as of the last input on its own windows, which a window
+        // manager refuses once another window has had input since.
+        #[cfg(target_os = "linux")]
+        match self.raw_handle() {
+            Ok(crate::surface::RawHandle::Xlib {
+                display,
+                window,
+                screen,
+            }) if self.is_visible() => return crate::xlib::raise(display, window, screen),
+            Ok(crate::surface::RawHandle::Wayland { .. }) => {
+                let token = crate::hotkey::take_activation_token();
+                if !token.is_empty() {
+                    return crate::drag::activate(self, &token);
+                }
+            }
+            _ => {}
+        }
         // SAFETY: handle is live.
         support::check(
             unsafe { SDL_RaiseWindow(self.handle) },

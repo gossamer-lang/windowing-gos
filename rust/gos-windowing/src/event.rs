@@ -480,6 +480,15 @@ pub enum Event {
     /// The desktop's contrast, motion, accent, or text-size preferences may
     /// have changed; `system::preferences()` reads them.
     PreferencesChanged,
+    /// A global shortcut (`App::register_hotkey`) was pressed.
+    Hotkey {
+        hotkey: crate::hotkey::HotkeyId,
+    },
+    /// The desktop refused a global shortcut after registering it, and why.
+    HotkeyFailed {
+        hotkey: crate::hotkey::HotkeyId,
+        reason: String,
+    },
 }
 
 /// The event types the library registers with SDL, offsets from the first.
@@ -492,7 +501,8 @@ pub(crate) const MENU_OFFSET: u32 = 5;
 pub(crate) const DRAG_OFFSET: u32 = 6;
 pub(crate) const LOCAL_DROP_OFFSET: u32 = 7;
 pub(crate) const PREFERENCES_OFFSET: u32 = 8;
-pub(crate) const USER_EVENT_COUNT: i32 = 9;
+pub(crate) const HOTKEY_OFFSET: u32 = 9;
+pub(crate) const USER_EVENT_COUNT: i32 = 10;
 
 fn window_id(raw: SDL_WindowID) -> WindowId {
     WindowId(raw.0)
@@ -696,6 +706,17 @@ fn decode_own(e: &SDL_UserEvent, offset: u32) -> Option<Event> {
             })
         }
         PREFERENCES_OFFSET => Some(Event::PreferencesChanged),
+        HOTKEY_OFFSET => {
+            let hotkey = crate::hotkey::HotkeyId(data1 as u32);
+            if e.code == crate::hotkey::FAILED {
+                Some(Event::HotkeyFailed {
+                    hotkey,
+                    reason: crate::hotkey::take_failure(hotkey.0),
+                })
+            } else {
+                Some(Event::Hotkey { hotkey })
+            }
+        }
         // A drop of the library's own Wayland drag on one of its windows,
         // reported as SDL reports a drop; `code` names the step.
         LOCAL_DROP_OFFSET => {

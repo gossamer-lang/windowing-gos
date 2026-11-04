@@ -12,9 +12,9 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use gos_windowing::{
-    Buttons, DialogChoice, DialogId, DisplayId, DragId, DragOperation, Event, Key, MenuSource,
-    Mods, MouseButton, Orientation, PenAxis, PenState, PointerSource, Scancode, Theme, TrayId,
-    WindowId,
+    Buttons, DialogChoice, DialogId, DisplayId, DragId, DragOperation, Event, HotkeyId, Key,
+    MenuSource, Mods, MouseButton, Orientation, PenAxis, PenState, PointerSource, Scancode, Theme,
+    TrayId, WindowId,
 };
 
 /// The most words an event takes: `TouchMoved`'s tag and eight fields.
@@ -75,7 +75,7 @@ pub fn keep_texts(texts: Vec<String>) {
 
 /// Whether the event `tag` names has texts beside its words.
 pub fn carries_texts(tag: i64) -> bool {
-    matches!(tag, 14 | 42 | 43 | 65 | 66 | 68)
+    matches!(tag, 14 | 42 | 43 | 65 | 66 | 68 | 73)
 }
 
 struct Writer {
@@ -656,6 +656,14 @@ pub fn encode(event: &Event) -> (Words, Vec<String>) {
             70
         }
         Event::PreferencesChanged => 71,
+        Event::Hotkey { hotkey } => {
+            w.small(hotkey.0);
+            72
+        }
+        Event::HotkeyFailed { hotkey, reason } => {
+            w.small(hotkey.0).text(reason);
+            73
+        }
     };
     w.words[0] = tag;
     (w.words, w.texts)
@@ -1163,6 +1171,13 @@ pub fn decode(words: &[i64], texts: Vec<String>) -> Result<Event, String> {
             },
         },
         71 => Event::PreferencesChanged,
+        72 => Event::Hotkey {
+            hotkey: HotkeyId(r.small()?),
+        },
+        73 => Event::HotkeyFailed {
+            hotkey: HotkeyId(r.small()?),
+            reason: r.text()?,
+        },
         n => return Err(format!("{n} is not an event")),
     })
 }
@@ -1433,6 +1448,13 @@ mod tests {
                 operation: Some(DragOperation::Link),
             },
             Event::PreferencesChanged,
+            Event::Hotkey {
+                hotkey: HotkeyId(3),
+            },
+            Event::HotkeyFailed {
+                hotkey: HotkeyId(4),
+                reason: "declined".into(),
+            },
         ]
     }
 

@@ -261,4 +261,8 @@ pub enum Event {
     /// The desktop's contrast, motion, accent, or text-size preferences may
     /// have changed; `system::preferences()` reads them.
     PreferencesChanged
+    /// A global shortcut (`App::register_hotkey`) was pressed.
+    Hotkey { hotkey: crate::hotkey::HotkeyId }
+    /// The desktop refused a global shortcut after registering it, and why.
+    HotkeyFailed { hotkey: crate::hotkey::HotkeyId, reason: String }
 }

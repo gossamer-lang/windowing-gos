@@ -139,6 +139,13 @@ pub(crate) fn finished() {
     wayland::reap();
 }
 
+/// Whether SDL should go on to handle the X event `raw`: false for the
+/// drag's own messages.
+#[cfg(target_os = "linux")]
+pub(crate) fn on_x11_event(raw: *mut sdl3_sys::system::XEvent) -> bool {
+    xdnd::on_event(raw)
+}
+
 /// Ends the drag sources when the session ends.
 pub(crate) fn shutdown() {
     #[cfg(target_os = "linux")]
@@ -150,12 +157,12 @@ pub(crate) fn shutdown() {
 
 #[cfg(target_os = "linux")]
 mod xdnd {
-    use std::ffi::{CString, c_int, c_long, c_void};
+    use std::ffi::{CString, c_int, c_long};
     use std::sync::OnceLock;
 
     use parking_lot::Mutex;
     use sdl3_sys::properties::{SDL_GetNumberProperty, SDL_GetPointerProperty};
-    use sdl3_sys::system::{SDL_SetX11EventHook, XEvent as SdlXEvent};
+    use sdl3_sys::system::XEvent as SdlXEvent;
     use sdl3_sys::video::{
         SDL_GetWindowProperties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER,
         SDL_PROP_WINDOW_X11_WINDOW_NUMBER,
@@ -195,7 +202,6 @@ mod xdnd {
 
     static ACTIVE: Mutex<Option<Drag>> = Mutex::new(None);
     static NEXT_ID: Mutex<u64> = Mutex::new(1);
-    static HOOKED: Mutex<bool> = Mutex::new(false);
 
     fn xlib() -> Option<&'static Xlib> {
         static XLIB: OnceLock<Option<Xlib>> = OnceLock::new();
@@ -279,12 +285,7 @@ mod xdnd {
             );
             (x.XSetSelectionOwner)(display, atom(x, display, "XdndSelection"), source, 0);
         }
-        let mut hooked = HOOKED.lock();
-        if !*hooked {
-            // SAFETY: the hook stays valid for the program's life.
-            unsafe { SDL_SetX11EventHook(Some(on_event), std::ptr::null_mut()) };
-            *hooked = true;
-        }
+        crate::hooks::x11_events::subscribe(crate::hooks::x11_events::DRAG);
         let mut next = NEXT_ID.lock();
         let id = *next;
         *next += 1;
@@ -326,12 +327,7 @@ mod xdnd {
     }
 
     pub(super) fn shutdown() {
-        let mut hooked = HOOKED.lock();
-        if *hooked {
-            // SAFETY: clearing the hook SDL calls.
-            unsafe { SDL_SetX11EventHook(None, std::ptr::null_mut()) };
-            *hooked = false;
-        }
+        crate::hooks::x11_events::unsubscribe(crate::hooks::x11_events::DRAG);
         *ACTIVE.lock() = None;
     }
 
@@ -625,7 +621,7 @@ mod xdnd {
 
     // SDL runs this for every X event before handling it, and handles the
     // event only when it answers true; the drag's own messages answer false.
-    unsafe extern "C" fn on_event(_userdata: *mut c_void, raw: *mut SdlXEvent) -> bool {
+    pub(super) fn on_event(raw: *mut SdlXEvent) -> bool {
         let Some(x) = xlib() else { return true };
         let mut active = ACTIVE.lock();
         let Some(xinput) = active.as_ref().map(|d| d.xinput) else {

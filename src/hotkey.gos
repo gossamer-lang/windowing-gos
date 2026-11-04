@@ -1,0 +1,34 @@
+// Global shortcuts: key chords the desktop hands to the application while
+// any application has focus. A press arrives as `Event::Hotkey`; a refusal
+// the desktop portal makes after registering arrives as
+// `Event::HotkeyFailed`.
+
+use std::errors
+use std::encoding::json
+use windowing_desktop
+
+use crate::App
+use crate::event::Mods
+use crate::keys::Key
+use crate::support
+
+/// A global shortcut the application registered.
+pub newtype HotkeyId = u32
+
+impl App {
+    /// Asks the desktop to deliver `key` pressed with exactly `mods` as
+    /// `Event::Hotkey` while any application has focus. `description` names
+    /// the action where the desktop lists shortcuts.
+    pub fn register_hotkey(&self, key: Key, mods: Mods, description: String) -> Result<HotkeyId, errors::Error> {
+        support::require_main_thread("App::register_hotkey")
+        let id = support::ok(windowing_desktop::hotkey_register(key.code() as i64, json::encode(mods), description))?
+        Ok((id as u32).into())
+    }
+
+    /// Gives hotkey `id` back to the desktop.
+    pub fn unregister_hotkey(&self, id: HotkeyId) -> Result<(), errors::Error> {
+        support::require_main_thread("App::unregister_hotkey")
+        let raw: u32 = id.into()
+        support::ok(windowing_desktop::hotkey_unregister(raw as i64))
+    }
+}

@@ -154,6 +154,8 @@ pub (package) fn decode(tag: i64) -> Option<Event> {
         69 => Event::MenuSelected { source: menu_source(word(1), word(2)), item: word(3) as u32 }
         70 => Event::DragFinished { drag: drag(word(1)), operation: operation(word(2)) }
         71 => Event::PreferencesChanged
+        72 => Event::Hotkey { hotkey: hotkey(word(1)) }
+        73 => Event::HotkeyFailed { hotkey: hotkey(word(1)), reason: taken_texts()[0] }
         _ => return None
     }
     Some(event)
@@ -276,6 +278,14 @@ pub (package) fn encode(event: Event) -> [i64; 9] {
             [70, raw as i64, operation_code(operation), 0, 0, 0, 0, 0, 0]
         }
         Event::PreferencesChanged => [71, 0, 0, 0, 0, 0, 0, 0, 0]
+        Event::Hotkey { hotkey } => {
+            let raw: u32 = hotkey.into()
+            [72, raw as i64, 0, 0, 0, 0, 0, 0, 0]
+        }
+        Event::HotkeyFailed { hotkey, .. } => {
+            let raw: u32 = hotkey.into()
+            [73, raw as i64, 0, 0, 0, 0, 0, 0, 0]
+        }
     }
 }
 
@@ -292,6 +302,7 @@ pub (package) fn texts_of(event: Event) -> Vec<String> {
         Event::DroppedFile { path, .. } => #[path]
         Event::DroppedText { text, .. } => #[text]
         Event::OpenRequested { path } => #[path]
+        Event::HotkeyFailed { reason, .. } => #[reason]
         _ => #[]
     }
 }
@@ -299,7 +310,7 @@ pub (package) fn texts_of(event: Event) -> Vec<String> {
 /// Whether the event `tag` names has texts beside its words.
 pub (package) fn carries_texts(tag: i64) -> bool {
     match tag {
-        14 | 42 | 43 | 65 | 66 | 68 => true
+        14 | 42 | 43 | 65 | 66 | 68 | 73 => true
         _ => false
     }
 }
@@ -322,6 +333,10 @@ fn bits(x: f64) -> i64 {
 
 fn flag(on: bool) -> i64 {
     if on { 1 } else { 0 }
+}
+
+fn hotkey(n: i64) -> crate::hotkey::HotkeyId {
+    (n as u32).into()
 }
 
 fn window(n: i64) -> WindowId {
@@ -644,6 +659,8 @@ mod tests {
             Event::MenuSelected { source: MenuSource::MenuBar { window: None }, item: 5 }
             Event::DragFinished { drag: (9 as u64).into(), operation: Some(DragOperation::Link) }
             Event::PreferencesChanged
+            Event::Hotkey { hotkey: (3 as u32).into() }
+            Event::HotkeyFailed { hotkey: (4 as u32).into(), reason: "declined" }
             Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Cancelled }
             Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Failed { reason: "no portal" } }
             Event::DialogClosed { dialog: (1 as u64).into(), choice: DialogChoice::Chosen { paths: #[], filter: None } }
@@ -664,7 +681,7 @@ mod tests {
     #[test]
     fn every_variant_has_its_own_tag() {
         let tags = samples().map(|e| encode(e)[0])
-        assert_eq(tags[..72], (0..72).collect::<Vec<i64>>())
+        assert_eq(tags[..74], (0..74).collect::<Vec<i64>>())
     }
 
     #[test]

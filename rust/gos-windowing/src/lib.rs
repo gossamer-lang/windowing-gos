@@ -22,6 +22,7 @@ mod error;
 pub mod event;
 mod frame;
 mod hooks;
+pub mod hotkey;
 pub mod idle;
 pub mod instance;
 pub mod keys;
@@ -68,6 +69,7 @@ pub use display::{Display, DisplayId, Mode, Orientation, Rect};
 pub use drag::{DragId, DragItem, DragOperation};
 pub use error::{Error, Result};
 pub use event::{Buttons, Event, Mods, MouseButton, PenAxis, PenState, PointerSource};
+pub use hotkey::HotkeyId;
 pub use instance::{Claim, Request as InstanceRequest};
 pub use keys::{Key, Scancode};
 pub use menu::{Menu, MenuEntry, MenuSource, Shortcut, TrayId};
@@ -83,7 +85,7 @@ pub use window::{
 pub use window::{Window, WindowId, WindowKind, WindowOptions};
 
 /// The library's version.
-pub const VERSION: &str = "0.1.3";
+pub const VERSION: &str = "0.1.4";
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.
@@ -156,6 +158,7 @@ pub fn init(name: &str, options: &InitOptions) -> Result<App> {
         ));
     }
     system::PREFERENCES_EVENT_TYPE.store(base + event::PREFERENCES_OFFSET, Ordering::Release);
+    hotkey::HOTKEY_EVENT_TYPE.store(base + event::HOTKEY_OFFSET, Ordering::Release);
     access::set_wake_event(base + event::WAKE_OFFSET);
     if let Err(e) = hooks::add_scoped_redraw() {
         // SAFETY: undoes the init above.
@@ -218,6 +221,7 @@ impl App {
         support::require_main_thread("App::finalize");
         dialog::shutdown();
         drag::shutdown();
+        hotkey::shutdown();
         system::shutdown();
         win32::shutdown();
         #[cfg(target_os = "macos")]

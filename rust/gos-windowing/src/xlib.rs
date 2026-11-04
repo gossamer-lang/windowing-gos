@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::sync::OnceLock;
 
-use x11_dl::xlib::{Atom, Display, Xlib};
+use x11_dl::xlib::{self, Atom, Display, Xlib};
 
 /// Xlib's functions, or `None` when the library is not installed.
 pub(crate) fn xlib() -> Option<&'static Xlib> {
@@ -94,4 +94,235 @@ pub(crate) fn activate(
         (x.XFlush)(display);
     }
     Ok(())
+}
+
+// The X server time of the latest key press the application took outside its
+// own windows, such as a hotkey grabbed on the root window; 0 before any.
+static OUTSIDE_INPUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Records the server time of input that reached the application outside its
+/// windows, which entitles it to take focus at the window manager.
+pub(crate) fn note_outside_input(time: std::os::raw::c_ulong) {
+    OUTSIDE_INPUT.store(u64::from(time as u32), std::sync::atomic::Ordering::Relaxed);
+}
+
+// X server times are 32-bit milliseconds that wrap; the later of two is the
+// one less than half the range ahead. 0 means none.
+fn later(a: u32, b: u32) -> u32 {
+    if b == 0 || (a != 0 && (a.wrapping_sub(b) as i32) > 0) {
+        a
+    } else {
+        b
+    }
+}
+
+// The window's last user time (_NET_WM_USER_TIME), 0 when unset.
+fn user_time(x: &Xlib, display: *mut Display, window: xlib::Window) -> u32 {
+    let mut kind: Atom = 0;
+    let mut format = 0;
+    let mut count: std::os::raw::c_ulong = 0;
+    let mut after: std::os::raw::c_ulong = 0;
+    let mut data: *mut u8 = std::ptr::null_mut();
+    // SAFETY: display and window are live; Xlib allocates `data`, freed below.
+    let read = unsafe {
+        (x.XGetWindowProperty)(
+            display,
+            window,
+            atom(x, display, "_NET_WM_USER_TIME"),
+            0,
+            1,
+            0,
+            xlib::XA_CARDINAL,
+            &mut kind,
+            &mut format,
+            &mut count,
+            &mut after,
+            &mut data,
+        )
+    };
+    let mut time = 0;
+    if read == 0 && !data.is_null() {
+        if format == 32 && count == 1 {
+            // SAFETY: a format-32 property of one item is one native unsigned long.
+            time = unsafe { *data.cast::<std::os::raw::c_ulong>() } as u32;
+        }
+        // SAFETY: data came from XGetWindowProperty.
+        unsafe { (x.XFree)(data.cast()) };
+    }
+    time
+}
+
+// Gives the window the latest user time it can claim, its own or the latest
+// outside input's; 0 when it has neither.
+fn claim_user_time(x: &Xlib, display: *mut Display, window: xlib::Window) -> u32 {
+    let own = user_time(x, display, window);
+    let time = later(
+        OUTSIDE_INPUT.load(std::sync::atomic::Ordering::Relaxed) as u32,
+        own,
+    );
+    if time != own {
+        let value = std::os::raw::c_ulong::from(time);
+        // SAFETY: Xlib consumes one native unsigned long for a format-32 property.
+        unsafe {
+            (x.XChangeProperty)(
+                display,
+                window,
+                atom(x, display, "_NET_WM_USER_TIME"),
+                xlib::XA_CARDINAL,
+                32,
+                xlib::PropModeReplace,
+                (&value as *const std::os::raw::c_ulong).cast(),
+                1,
+            );
+        }
+    }
+    time
+}
+
+/// The EWMH states SDL keeps for a window, as `_NET_WM_STATE` atom names.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct States {
+    pub above: bool,
+    pub utility: bool,
+    pub maximized: bool,
+    pub fullscreen: bool,
+    pub modal: bool,
+}
+
+impl States {
+    fn names(self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.above {
+            names.push("_NET_WM_STATE_ABOVE");
+        }
+        if self.utility {
+            names.extend(["_NET_WM_STATE_SKIP_TASKBAR", "_NET_WM_STATE_SKIP_PAGER"]);
+        }
+        if self.maximized {
+            names.extend([
+                "_NET_WM_STATE_MAXIMIZED_VERT",
+                "_NET_WM_STATE_MAXIMIZED_HORZ",
+            ]);
+        }
+        if self.fullscreen {
+            names.push("_NET_WM_STATE_FULLSCREEN");
+        }
+        if self.modal {
+            names.push("_NET_WM_STATE_MODAL");
+        }
+        names
+    }
+}
+
+/// Readies a withdrawn window to map again. The window manager drops a
+/// window's `_NET_WM_STATE` when it is withdrawn and decides focus at map time
+/// from `_NET_WM_USER_TIME`, so both are written before the map.
+pub(crate) fn prepare_map(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    states: States,
+) -> crate::Result<()> {
+    let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
+    let display = display as *mut Display;
+    let window = window as xlib::Window;
+    let atoms: Vec<Atom> = states
+        .names()
+        .into_iter()
+        .map(|n| atom(x, display, n))
+        .collect();
+    let state = atom(x, display, "_NET_WM_STATE");
+    // SAFETY: these are this live SDL window's X handles; `atoms` outlives the call.
+    unsafe {
+        if atoms.is_empty() {
+            (x.XDeleteProperty)(display, window, state);
+        } else {
+            (x.XChangeProperty)(
+                display,
+                window,
+                state,
+                xlib::XA_ATOM,
+                32,
+                xlib::PropModeReplace,
+                atoms.as_ptr().cast(),
+                atoms.len() as i32,
+            );
+        }
+    }
+    claim_user_time(x, display, window);
+    // SAFETY: display is the live SDL connection.
+    unsafe { (x.XFlush)(display) };
+    Ok(())
+}
+
+/// Raises the window and asks the window manager to focus it, as of the
+/// latest user time the window can claim.
+pub(crate) fn raise(display: *mut std::ffi::c_void, window: u64, screen: i64) -> crate::Result<()> {
+    use x11_dl::xlib::{ClientMessageData, XClientMessageEvent, XEvent};
+    let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
+    let display = display as *mut Display;
+    let window = window as xlib::Window;
+    let time = claim_user_time(x, display, window);
+    let mut message = XClientMessageEvent {
+        type_: xlib::ClientMessage,
+        serial: 0,
+        send_event: 1,
+        display,
+        window,
+        message_type: atom(x, display, "_NET_ACTIVE_WINDOW"),
+        format: 32,
+        data: ClientMessageData::new(),
+    };
+    message.data.set_long(0, 1);
+    message.data.set_long(1, time as std::os::raw::c_long);
+    let mut event = XEvent {
+        client_message: message,
+    };
+    // SAFETY: these are this live SDL window's X handles.
+    unsafe {
+        (x.XRaiseWindow)(display, window);
+        (x.XSendEvent)(
+            display,
+            (x.XRootWindow)(display, screen as i32),
+            0,
+            xlib::SubstructureNotifyMask | xlib::SubstructureRedirectMask,
+            &mut event,
+        );
+        (x.XFlush)(display);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{States, later};
+
+    #[test]
+    fn the_later_server_time_wins_across_a_wrap() {
+        assert_eq!(later(20, 10), 20);
+        assert_eq!(later(10, 20), 20);
+        assert_eq!(later(5, u32::MAX - 5), 5);
+        assert_eq!(later(0, 7), 7);
+        assert_eq!(later(7, 0), 7);
+    }
+
+    #[test]
+    fn each_kept_state_names_its_atoms() {
+        assert!(States::default().names().is_empty());
+        let all = States {
+            above: true,
+            utility: true,
+            maximized: true,
+            fullscreen: true,
+            modal: true,
+        };
+        assert_eq!(all.names().len(), 7);
+        assert_eq!(
+            States {
+                above: true,
+                ..States::default()
+            }
+            .names(),
+            ["_NET_WM_STATE_ABOVE"]
+        );
+    }
 }

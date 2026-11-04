@@ -969,11 +969,7 @@ mod x11_scale {
 // color for the accent, and the Accessibility text scale. Changes arrive as
 // window messages, which SDL's message hook passes on.
 #[cfg(target_os = "windows")]
-mod prefs {
-    use std::ffi::c_void;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    use sdl3_sys::system::{MSG, SDL_SetWindowsMessageHook};
+pub(crate) mod prefs {
     use windows_sys::Win32::Graphics::Dwm::DwmGetColorizationColor;
     use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
     use windows_sys::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
@@ -985,8 +981,6 @@ mod prefs {
     };
 
     use super::{Preferences, changed};
-
-    static HOOKED: AtomicBool = AtomicBool::new(false);
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -1095,30 +1089,21 @@ mod prefs {
         (read != 0, metrics)
     }
 
-    unsafe extern "C" fn on_message(_userdata: *mut c_void, message: *mut MSG) -> bool {
-        // SAFETY: SDL hands a complete message.
-        let m = unsafe { &*message.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>() };
+    pub(crate) fn on_message(m: &windows_sys::Win32::UI::WindowsAndMessaging::MSG) {
         if matches!(
             m.message,
             WM_SETTINGCHANGE | WM_SYSCOLORCHANGE | WM_THEMECHANGED | WM_DWMCOLORIZATIONCOLORCHANGED
         ) {
             changed();
         }
-        true
     }
 
     pub(super) fn watch() {
-        if !HOOKED.swap(true, Ordering::AcqRel) {
-            // SAFETY: the hook stays valid for the program's life.
-            unsafe { SDL_SetWindowsMessageHook(Some(on_message), std::ptr::null_mut()) };
-        }
+        crate::hooks::windows_messages::subscribe(crate::hooks::windows_messages::PREFERENCES);
     }
 
     pub(super) fn stop() {
-        if HOOKED.swap(false, Ordering::AcqRel) {
-            // SAFETY: clears the hook SDL calls.
-            unsafe { SDL_SetWindowsMessageHook(None, std::ptr::null_mut()) };
-        }
+        crate::hooks::windows_messages::unsubscribe(crate::hooks::windows_messages::PREFERENCES);
     }
 }
 

@@ -854,6 +854,22 @@ mod desktop_bindings {
         with_app(|app| app.set_menu_bar(&menus).map_err(fail))
     }
 
+    /// Registers a global shortcut: key code `key` (SDL's) with the encoded
+    /// `Mods`; answers its id.
+    pub fn hotkey_register(key: i64, mods: String, description: String) -> Result<i64, GosError> {
+        let mods: gos_windowing::Mods = from_json(&mods, "key modifiers")?;
+        let key = gos_windowing::Key::from_code(key as u32);
+        let id = with_app(|app| app.register_hotkey(key, mods, &description).map_err(fail))?;
+        Ok(i64::from(id.0))
+    }
+
+    pub fn hotkey_unregister(id: i64) -> Result<(), GosError> {
+        with_app(|app| {
+            app.unregister_hotkey(gos_windowing::HotkeyId(id as u32));
+            Ok(())
+        })
+    }
+
     /// Adds a tray icon from an encoded `Option<TrayIcon>`; answers its handle.
     pub fn tray_create(icon: String, tooltip: String) -> Result<i64, GosError> {
         let icon: Option<tray::TrayIcon> = from_json(&icon, "a tray icon")?;

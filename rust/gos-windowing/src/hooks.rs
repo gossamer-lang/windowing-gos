@@ -308,3 +308,85 @@ pub(crate) fn preserve_x11_owners() -> bool {
         !library.is_null() && libc::dlclose(library) == 0
     }
 }
+
+/// SDL keeps one X11 event hook. Each part of the library that reads raw X
+/// events subscribes here, and the one hook offers every event to each
+/// subscriber until one consumes it.
+#[cfg(target_os = "linux")]
+pub(crate) mod x11_events {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    use sdl3_sys::system::{SDL_SetX11EventHook, XEvent};
+
+    pub(crate) const DRAG: u8 = 1;
+    pub(crate) const HOTKEYS: u8 = 2;
+
+    static SUBSCRIBERS: AtomicU8 = AtomicU8::new(0);
+
+    // SDL handles the event only when this answers true.
+    unsafe extern "C" fn on_event(_userdata: *mut c_void, event: *mut XEvent) -> bool {
+        let subscribed = SUBSCRIBERS.load(Ordering::Acquire);
+        (subscribed & DRAG == 0 || crate::drag::on_x11_event(event))
+            && (subscribed & HOTKEYS == 0 || crate::hotkey::on_x11_event(event))
+    }
+
+    /// Offers X events to `subscriber` from now on. Main thread only.
+    pub(crate) fn subscribe(subscriber: u8) {
+        if SUBSCRIBERS.fetch_or(subscriber, Ordering::AcqRel) == 0 {
+            // SAFETY: the hook is a plain function that lives for the program.
+            unsafe { SDL_SetX11EventHook(Some(on_event), std::ptr::null_mut()) };
+        }
+    }
+
+    /// Stops offering X events to `subscriber`. Main thread only.
+    pub(crate) fn unsubscribe(subscriber: u8) {
+        if SUBSCRIBERS.fetch_and(!subscriber, Ordering::AcqRel) == subscriber {
+            // SAFETY: clears the hook SDL calls.
+            unsafe { SDL_SetX11EventHook(None, std::ptr::null_mut()) };
+        }
+    }
+}
+
+/// SDL keeps one Windows message hook, shared the same way as the X11 one.
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_messages {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    use sdl3_sys::system::{MSG, SDL_SetWindowsMessageHook};
+
+    pub(crate) const PREFERENCES: u8 = 1;
+    pub(crate) const HOTKEYS: u8 = 2;
+
+    static SUBSCRIBERS: AtomicU8 = AtomicU8::new(0);
+
+    unsafe extern "C" fn on_message(_userdata: *mut c_void, message: *mut MSG) -> bool {
+        // SAFETY: SDL hands a complete message.
+        let m = unsafe { &*message.cast::<windows_sys::Win32::UI::WindowsAndMessaging::MSG>() };
+        let subscribed = SUBSCRIBERS.load(Ordering::Acquire);
+        if subscribed & PREFERENCES != 0 {
+            crate::system::prefs::on_message(m);
+        }
+        if subscribed & HOTKEYS != 0 {
+            crate::hotkey::on_windows_message(m);
+        }
+        true
+    }
+
+    /// Offers thread and window messages to `subscriber` from now on.
+    pub(crate) fn subscribe(subscriber: u8) {
+        if SUBSCRIBERS.fetch_or(subscriber, Ordering::AcqRel) == 0 {
+            // SAFETY: the hook is a plain function that lives for the program.
+            unsafe { SDL_SetWindowsMessageHook(Some(on_message), std::ptr::null_mut()) };
+        }
+    }
+
+    /// Stops offering messages to `subscriber`.
+    pub(crate) fn unsubscribe(subscriber: u8) {
+        if SUBSCRIBERS.fetch_and(!subscriber, Ordering::AcqRel) == subscriber {
+            // SAFETY: clears the hook SDL calls.
+            unsafe { SDL_SetWindowsMessageHook(None, std::ptr::null_mut()) };
+        }
+    }
+}
