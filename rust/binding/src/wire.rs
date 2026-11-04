@@ -1462,7 +1462,7 @@ mod tests {
     fn every_event_survives_its_wire() {
         let samples = samples();
         let tags: Vec<i64> = samples.iter().map(|e| encode(e).0[0]).collect();
-        assert_eq!(tags, (0..72).collect::<Vec<i64>>());
+        assert_eq!(tags, (0..74).collect::<Vec<i64>>());
         for event in samples {
             let (words, texts) = encode(&event);
             assert_eq!(carries_texts(words[0]), !texts.is_empty() || words[0] == 14);

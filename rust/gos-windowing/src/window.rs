@@ -394,7 +394,7 @@ impl Window {
                 display, window, ..
             }) = self.raw_handle()
         {
-            crate::xlib::prepare_map(display, window, self.kept_states())?;
+            crate::xlib::prepare_map(display, window, self.kept_states(), &x11_windows())?;
         }
         // SAFETY: handle is live.
         support::check(unsafe { SDL_ShowWindow(self.handle) }, "showing the window")
@@ -429,7 +429,9 @@ impl Window {
                 display,
                 window,
                 screen,
-            }) if self.is_visible() => return crate::xlib::raise(display, window, screen),
+            }) if self.is_visible() => {
+                return crate::xlib::raise(display, window, screen, &x11_windows());
+            }
             Ok(crate::surface::RawHandle::Wayland { .. }) => {
                 let token = crate::hotkey::take_activation_token();
                 if !token.is_empty() {
@@ -1048,6 +1050,27 @@ pub(crate) fn set_app_icon(rgba: &[u8], width: i64, height: i64) -> Result<()> {
         offer_icon(handle, icon)?;
     }
     Ok(())
+}
+
+/// The X11 window of every open window, for the input time they share.
+#[cfg(target_os = "linux")]
+fn x11_windows() -> Vec<u64> {
+    all_windows()
+        .into_iter()
+        .map(|handle| {
+            // SAFETY: SDL listed this window as open.
+            let props = unsafe { SDL_GetWindowProperties(handle) };
+            // SAFETY: props is live; SDL answers 0 when unset.
+            unsafe {
+                sdl3_sys::properties::SDL_GetNumberProperty(
+                    props,
+                    SDL_PROP_WINDOW_X11_WINDOW_NUMBER,
+                    0,
+                ) as u64
+            }
+        })
+        .filter(|&id| id != 0)
+        .collect()
 }
 
 /// Every open window's handle.

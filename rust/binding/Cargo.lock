@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "gos-windowing"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "block2",
  "getrandom",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding"
-version = "0.75.17"
+version = "0.75.19"
 dependencies = [
  "gossamer-binding-abi",
  "gossamer-binding-macros",
@@ -417,11 +417,11 @@ dependencies = [
 
 [[package]]
 name = "gossamer-binding-abi"
-version = "0.75.17"
+version = "0.75.19"
 
 [[package]]
 name = "gossamer-binding-macros"
-version = "0.75.17"
+version = "0.75.19"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1256,7 +1256,7 @@ dependencies = [
 
 [[package]]
 name = "windowing-binding"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "gos-windowing",
  "gossamer-binding",

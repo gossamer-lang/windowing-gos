@@ -10,7 +10,7 @@ publish = false
 crate-type = ["rlib"]
 
 [dependencies]
-gossamer-binding = "0.75.17"
+gossamer-binding = "0.75.19"
 gos-windowing = { path = "../gos-windowing" }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }

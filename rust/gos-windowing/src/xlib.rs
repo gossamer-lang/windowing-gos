@@ -152,13 +152,17 @@ fn user_time(x: &Xlib, display: *mut Display, window: xlib::Window) -> u32 {
     time
 }
 
-// Gives the window the latest user time it can claim, its own or the latest
-// outside input's; 0 when it has neither.
-fn claim_user_time(x: &Xlib, display: *mut Display, window: xlib::Window) -> u32 {
+// Gives the window the latest user time the application can claim: the
+// latest input any of its windows (`siblings` included) or a hotkey took;
+// 0 when there was none.
+fn claim_user_time(x: &Xlib, display: *mut Display, window: xlib::Window, siblings: &[u64]) -> u32 {
     let own = user_time(x, display, window);
-    let time = later(
-        OUTSIDE_INPUT.load(std::sync::atomic::Ordering::Relaxed) as u32,
-        own,
+    let time = siblings.iter().fold(
+        later(
+            OUTSIDE_INPUT.load(std::sync::atomic::Ordering::Relaxed) as u32,
+            own,
+        ),
+        |latest, &s| later(user_time(x, display, s as xlib::Window), latest),
     );
     if time != own {
         let value = std::os::raw::c_ulong::from(time);
@@ -221,6 +225,7 @@ pub(crate) fn prepare_map(
     display: *mut std::ffi::c_void,
     window: u64,
     states: States,
+    siblings: &[u64],
 ) -> crate::Result<()> {
     let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
     let display = display as *mut Display;
@@ -248,20 +253,25 @@ pub(crate) fn prepare_map(
             );
         }
     }
-    claim_user_time(x, display, window);
+    claim_user_time(x, display, window, siblings);
     // SAFETY: display is the live SDL connection.
     unsafe { (x.XFlush)(display) };
     Ok(())
 }
 
 /// Raises the window and asks the window manager to focus it, as of the
-/// latest user time the window can claim.
-pub(crate) fn raise(display: *mut std::ffi::c_void, window: u64, screen: i64) -> crate::Result<()> {
+/// latest user time the application can claim across its windows.
+pub(crate) fn raise(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    screen: i64,
+    siblings: &[u64],
+) -> crate::Result<()> {
     use x11_dl::xlib::{ClientMessageData, XClientMessageEvent, XEvent};
     let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
     let display = display as *mut Display;
     let window = window as xlib::Window;
-    let time = claim_user_time(x, display, window);
+    let time = claim_user_time(x, display, window, siblings);
     let mut message = XClientMessageEvent {
         type_: xlib::ClientMessage,
         serial: 0,
