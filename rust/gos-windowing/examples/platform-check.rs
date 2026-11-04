@@ -53,54 +53,11 @@ fn run() -> Result<()> {
             )?;
             window.stop_text_input()?;
             assert!(!window.is_text_input_active());
-            let mut old = window.framebuffer()?;
-            old.fill(30, 70, 140);
-            window.present(&old)?;
-            let captured = window.capture()?;
-            let (r, g, b) = captured.format.rgb_offsets();
-            assert_eq!(
-                [captured.pixels[r], captured.pixels[g], captured.pixels[b]],
-                [30, 70, 140]
-            );
-            // Each quadrant repainted alone, a frame apiece: the window shows
-            // all four, so every frame carried the others' pixels forward.
-            let (w, h) = (captured.width, captured.height);
-            let colors = [[200, 10, 10], [10, 200, 10], [10, 10, 200], [200, 200, 10]];
-            let quadrant = |i: i64| Rect {
-                x: (i % 2) * (w / 2),
-                y: (i / 2) * (h / 2),
-                width: w / 2,
-                height: h / 2,
-            };
-            for (i, color) in (0..).zip(colors) {
-                let q = quadrant(i);
-                window.paint_surface(&[q], |pixels, _, _, stride, format| {
-                    let (r, g, b) = format.rgb_offsets();
-                    for y in q.y..q.y + q.height {
-                        for x in q.x..q.x + q.width {
-                            let at = (y * stride + x * 4) as usize;
-                            pixels[at + r] = color[0];
-                            pixels[at + g] = color[1];
-                            pixels[at + b] = color[2];
-                        }
-                    }
-                })?;
-            }
-            let shown = window.capture()?;
-            let (r, g, b) = shown.format.rgb_offsets();
-            for (i, color) in (0..).zip(colors) {
-                let q = quadrant(i);
-                let at = ((q.y + q.height / 2) * shown.stride + (q.x + q.width / 2) * 4) as usize;
-                assert_eq!(
-                    [
-                        shown.pixels[at + r],
-                        shown.pixels[at + g],
-                        shown.pixels[at + b]
-                    ],
-                    color,
-                    "quadrant {i} after four partial repaints"
-                );
-            }
+            // The window is resized before it shows a frame. A compositor may
+            // take a frame it receives after a resize request as the client's
+            // own size: sway sizes a floating Xwayland window to each buffer
+            // of a new size.
+            let old = window.framebuffer()?;
             // A size change on a macOS layer is painted from inside the
             // resize, before any present, at the window's new pixel size.
             let mut redraws = 0;
@@ -150,8 +107,53 @@ fn run() -> Result<()> {
                 "old framebuffer accepted after resize"
             );
             let mut frame = window.framebuffer()?;
-            frame.fill(80, 120, 160);
+            frame.fill(30, 70, 140);
             window.present(&frame)?;
+            let captured = window.capture()?;
+            let (r, g, b) = captured.format.rgb_offsets();
+            assert_eq!(
+                [captured.pixels[r], captured.pixels[g], captured.pixels[b]],
+                [30, 70, 140]
+            );
+            // Each quadrant repainted alone, a frame apiece: the window shows
+            // all four, so every frame carried the others' pixels forward.
+            let (w, h) = (captured.width, captured.height);
+            let colors = [[200, 10, 10], [10, 200, 10], [10, 10, 200], [200, 200, 10]];
+            let quadrant = |i: i64| Rect {
+                x: (i % 2) * (w / 2),
+                y: (i / 2) * (h / 2),
+                width: w / 2,
+                height: h / 2,
+            };
+            for (i, color) in (0..).zip(colors) {
+                let q = quadrant(i);
+                window.paint_surface(&[q], |pixels, _, _, stride, format| {
+                    let (r, g, b) = format.rgb_offsets();
+                    for y in q.y..q.y + q.height {
+                        for x in q.x..q.x + q.width {
+                            let at = (y * stride + x * 4) as usize;
+                            pixels[at + r] = color[0];
+                            pixels[at + g] = color[1];
+                            pixels[at + b] = color[2];
+                        }
+                    }
+                })?;
+            }
+            let shown = window.capture()?;
+            let (r, g, b) = shown.format.rgb_offsets();
+            for (i, color) in (0..).zip(colors) {
+                let q = quadrant(i);
+                let at = ((q.y + q.height / 2) * shown.stride + (q.x + q.width / 2) * 4) as usize;
+                assert_eq!(
+                    [
+                        shown.pixels[at + r],
+                        shown.pixels[at + g],
+                        shown.pixels[at + b]
+                    ],
+                    color,
+                    "quadrant {i} after four partial repaints"
+                );
+            }
             if iteration == 0 {
                 if caps.get("frame-theme").unwrap().support == Support::Unavailable {
                     assert!(
