@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5 - Platform check under sway
+
+- The `platform-check` example resizes its window before it shows a frame, so it passes under sway, which sizes a floating Xwayland window to each buffer of a new size.
+
 ## 0.1.4 - Global shortcuts
 
 - Requires Gossamer 0.76.0 or later.

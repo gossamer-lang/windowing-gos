@@ -85,7 +85,7 @@ pub use window::{
 pub use window::{Window, WindowId, WindowKind, WindowOptions};
 
 /// The library's version.
-pub const VERSION: &str = "0.1.4";
+pub const VERSION: &str = "0.1.5";
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.
