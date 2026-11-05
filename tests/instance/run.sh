@@ -25,9 +25,7 @@ for tier in vm jit debug release; do
             kill -0 "$primary" 2>/dev/null || { cat "$log"; exit 1; }
             sleep 0.1
         done
-        # A subshell keeps the variable to this launch: an assignment before
-        # a shell function call may outlast it.
-        (export SINGLE_INSTANCE_COMMAND_LINE=1; run -e htop "a b" "")
+        run --command-line -e htop "a b" ""
         XDG_ACTIVATION_TOKEN=context-token DESKTOP_STARTUP_ID=context-startup run "/tmp/notes.txt" "/tmp/a b.txt"
         wait "$primary"
         cat "$log"

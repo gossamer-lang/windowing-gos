@@ -1,7 +1,6 @@
 // One instance per application. The first launch prints `primary` and waits
 // for a later launch's request; a later launch hands over its arguments as
-// files to open, or with SINGLE_INSTANCE_COMMAND_LINE set as its command
-// line, and exits.
+// files to open, or after `--command-line` as its command line, and exits.
 
 use std::{env, errors, process}
 use windowing::instance
@@ -11,10 +10,8 @@ const APP_ID: String = "dev.gossamer.windowing.single-instance"
 
 fn run() -> Result<(), errors::Error> {
     let args = env::args()
-    // With SINGLE_INSTANCE_COMMAND_LINE set, a launch hands over its own
-    // arguments instead of paths.
-    let request = if env::var("SINGLE_INSTANCE_COMMAND_LINE").is_some() {
-        Request::CommandLine { directory: env::current_dir()?, arguments: args }
+    let request = if !args.is_empty() && args[0] == "--command-line" {
+        Request::CommandLine { directory: env::current_dir()?, arguments: args[1..] }
     } else {
         Request::Open { uris: args.map(|path| instance::file_uri(path)) }
     }
