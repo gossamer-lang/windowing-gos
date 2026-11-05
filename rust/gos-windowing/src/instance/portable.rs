@@ -418,6 +418,16 @@ mod tests {
         ));
         assert!(listener.wait(Duration::from_secs(1)));
         assert_eq!(listener.take_requests(), vec![Request::Activate]);
+        let command_line = Request::CommandLine {
+            directory: "C:\\a folder".into(),
+            arguments: vec!["-e".into(), "htop".into(), "".into()],
+        };
+        assert!(matches!(
+            claim(&id, command_line.clone()).unwrap(),
+            Claim::Forwarded
+        ));
+        assert!(listener.wait(Duration::from_secs(1)));
+        assert_eq!(listener.take_requests(), vec![command_line]);
         listener.close();
         std::fs::remove_file(endpoint_path).unwrap();
     }

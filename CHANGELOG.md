@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.8 - Forwarded command lines
+
+- `instance::Request::CommandLine { directory, arguments }` hands a later launch's own command line, and the folder it ran in, to the running instance: on Linux as the `command-line` action of `org.freedesktop.Application`, elsewhere over the existing loopback forwarding.
+
 ## 0.1.7 - Focus from a global shortcut
 
 - On X11 a window that `Window::focus` brings forward after a press of a global shortcut takes focus even when the window manager would hold it back as focus stealing: the request says it is the user's own action. Later requests without a new press stay ordinary.

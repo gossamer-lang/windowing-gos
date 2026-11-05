@@ -1,8 +1,8 @@
 #!/bin/sh
 # Single-instance hand-off on the bytecode VM, the JIT, a debug native
 # build, and a release native build, each on a private session bus: the
-# first launch claims the name, the second forwards two paths and exits, and
-# the first prints what it received.
+# first launch claims the name, the second forwards its command line, the
+# third two paths, and the first prints what it received.
 set -e
 cd "$(dirname "$0")/../../examples/single-instance"
 GOS=${GOS:-gos}
@@ -25,13 +25,19 @@ for tier in vm jit debug release; do
             kill -0 "$primary" 2>/dev/null || { cat "$log"; exit 1; }
             sleep 0.1
         done
+        # A subshell keeps the variable to this launch: an assignment before
+        # a shell function call may outlast it.
+        (export SINGLE_INSTANCE_COMMAND_LINE=1; run -e htop "a b" "")
         XDG_ACTIVATION_TOKEN=context-token DESKTOP_STARTUP_ID=context-startup run "/tmp/notes.txt" "/tmp/a b.txt"
         wait "$primary"
         cat "$log"
         rm -f "$log"
     ' sh "$tier" 2>&1) || true
     expected="forwarded
+forwarded
 primary
+request CommandLine { directory: \"$(pwd)\", arguments: #[\"-e\", \"htop\", \"a b\", \"\"] }
+command line in $(pwd): #[\"-e\", \"htop\", \"a b\", \"\"]
 request Open { uris: #[\"file:///tmp/notes.txt\", \"file:///tmp/a%20b.txt\"] }
 activation context-token startup context-startup
 open Some(\"/tmp/notes.txt\")

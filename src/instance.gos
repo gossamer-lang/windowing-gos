@@ -15,6 +15,8 @@ pub enum Request {
     Activate
     /// Open these URIs (`file://` paths or other schemes).
     Open { uris: Vec<String> }
+    /// The later launch's own command line, read in `directory`.
+    CommandLine { directory: String, arguments: Vec<String> }
 }
 
 /// Context supplied by a desktop launcher. Tokens are single-use and bounded.

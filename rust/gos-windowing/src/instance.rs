@@ -10,8 +10,18 @@ use crate::Result;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Request {
     Activate,
-    Open { uris: Vec<String> },
+    Open {
+        uris: Vec<String>,
+    },
+    /// The later launch's own command line, read in `directory`.
+    CommandLine {
+        directory: String,
+        arguments: Vec<String>,
+    },
 }
+
+/// The `org.freedesktop.Application` action a forwarded command line travels as.
+pub const COMMAND_LINE_ACTION: &str = "command-line";
 
 /// Desktop launch context must accompany the forwarded request on Wayland.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -50,18 +60,40 @@ pub struct ForwardedRequest {
 
 impl Request {
     pub(crate) fn validate(&self) -> crate::Result<()> {
-        if let Self::Open { uris } = self {
-            let bytes = uris.iter().fold(0usize, |sum, uri| {
-                sum.saturating_add(uri.len().saturating_mul(8))
-                    .saturating_add(64)
-            });
-            if uris.len() > 4096 || bytes > 1024 * 1024 {
-                return Err(crate::Error::new(
-                    "instance request exceeds its byte budget",
-                ));
-            }
+        let texts: Vec<&String> = match self {
+            Self::Activate => return Ok(()),
+            Self::Open { uris } => uris.iter().collect(),
+            Self::CommandLine {
+                directory,
+                arguments,
+            } => std::iter::once(directory).chain(arguments).collect(),
+        };
+        let bytes = texts.iter().fold(0usize, |sum, text| {
+            sum.saturating_add(text.len().saturating_mul(8))
+                .saturating_add(64)
+        });
+        if texts.len() > 4096 || bytes > 1024 * 1024 || texts.iter().any(|t| t.contains('\0')) {
+            return Err(crate::Error::new(
+                "instance request exceeds its byte budget or contains NUL",
+            ));
         }
         Ok(())
+    }
+
+    // The bytes the Linux listener charges a queued request.
+    #[cfg(target_os = "linux")]
+    fn cost(&self) -> usize {
+        let texts: Vec<&String> = match self {
+            Self::Activate => Vec::new(),
+            Self::Open { uris } => uris.iter().collect(),
+            Self::CommandLine {
+                directory,
+                arguments,
+            } => std::iter::once(directory).chain(arguments).collect(),
+        };
+        texts
+            .iter()
+            .fold(128usize, |sum, text| sum.saturating_add(text.len() + 64))
     }
 }
 
@@ -272,12 +304,7 @@ mod linux {
             let bytes = |request: &ForwardedRequest| {
                 request.activation.token.len()
                     + request.activation.startup_id.len()
-                    + match &request.request {
-                        Request::Activate => 128,
-                        Request::Open { uris } => uris
-                            .iter()
-                            .fold(128usize, |sum, uri| sum.saturating_add(uri.len() + 64)),
-                    }
+                    + request.request.cost()
             };
             let request = ForwardedRequest {
                 request,
@@ -312,11 +339,18 @@ mod linux {
 
         fn activate_action(
             &self,
-            _name: String,
-            _parameter: Vec<OwnedValue>,
+            name: String,
+            parameter: Vec<OwnedValue>,
             platform_data: HashMap<String, OwnedValue>,
         ) -> zbus::fdo::Result<()> {
-            self.push(Request::Activate, platform_data)
+            let request = match command_line(&name, parameter) {
+                Some((directory, arguments)) => Request::CommandLine {
+                    directory,
+                    arguments,
+                },
+                None => Request::Activate,
+            };
+            self.push(request, platform_data)
         }
 
         fn open(
@@ -326,6 +360,19 @@ mod linux {
         ) -> zbus::fdo::Result<()> {
             self.push(Request::Open { uris }, platform_data)
         }
+    }
+
+    // A command-line action's directory and arguments; `None` for any other
+    // action, or one whose parameter is not that pair.
+    fn command_line(name: &str, parameter: Vec<OwnedValue>) -> Option<(String, Vec<String>)> {
+        let [directory, arguments]: [OwnedValue; 2] = parameter.try_into().ok()?;
+        if name != super::COMMAND_LINE_ACTION {
+            return None;
+        }
+        Some((
+            String::try_from(directory).ok()?,
+            Vec::<String>::try_from(arguments).ok()?,
+        ))
     }
 
     /// The object path an application id names: dots become slashes and
@@ -444,6 +491,23 @@ mod linux {
                     Some(INTERFACE),
                     "Open",
                     &(uris, platform),
+                ),
+                Request::CommandLine {
+                    directory,
+                    arguments,
+                } => connection.call_method(
+                    Some(app_id),
+                    path.as_str(),
+                    Some(INTERFACE),
+                    "ActivateAction",
+                    &(
+                        super::COMMAND_LINE_ACTION,
+                        vec![
+                            Value::from(directory.as_str()),
+                            Value::from(arguments.clone()),
+                        ],
+                        platform,
+                    ),
                 ),
             };
             withdraw(served);
@@ -721,6 +785,17 @@ mod bus_process_tests {
         ));
         assert!(listener.wait(Duration::from_secs(1)));
         assert_eq!(listener.take_requests(), vec![Request::Activate]);
+        // A later launch's command line reaches the instance whole.
+        let command_line = Request::CommandLine {
+            directory: "/tmp/a folder".into(),
+            arguments: vec!["-e".into(), "htop".into(), "".into(), "--title=x y".into()],
+        };
+        assert!(matches!(
+            claim(&id, command_line.clone()).unwrap(),
+            Claim::Forwarded
+        ));
+        assert!(listener.wait(Duration::from_secs(1)));
+        assert_eq!(listener.take_requests(), vec![command_line]);
         listener.close();
     }
 }
