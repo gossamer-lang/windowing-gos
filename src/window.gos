@@ -263,6 +263,21 @@ impl Window {
         support::ok(windowing_window::window_set_always_on_top(self.raw(), on_top))
     }
 
+    /// Shows the window on every virtual desktop (workspace, Space) rather
+    /// than on one: sticky on X11, joining every Space on macOS. Windows and
+    /// Wayland give applications no way to ask, so there it stays on its own
+    /// desktop.
+    pub fn set_on_all_desktops(&self, on: bool) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_on_all_desktops")
+        support::ok(windowing_window::window_set_on_all_desktops(self.raw(), on))
+    }
+
+    /// Whether the window was asked onto every virtual desktop.
+    pub fn on_all_desktops(&self) -> bool {
+        support::require_main_thread("Window::on_all_desktops")
+        support::ok(windowing_window::window_on_all_desktops(self.raw())).unwrap_or(false)
+    }
+
     /// The window's opacity, 0 transparent to 1 opaque.
     pub fn opacity(&self) -> f64 {
         support::require_main_thread("Window::opacity")

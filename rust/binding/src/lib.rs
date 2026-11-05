@@ -441,6 +441,14 @@ mod window_bindings {
         window(id)?.set_always_on_top(on).map_err(fail)
     }
 
+    pub fn window_set_on_all_desktops(id: i64, on: bool) -> Result<(), GosError> {
+        window(id)?.set_on_all_desktops(on).map_err(fail)
+    }
+
+    pub fn window_on_all_desktops(id: i64) -> Result<bool, String> {
+        Ok(window(id).map_err(|e| e.to_string())?.on_all_desktops())
+    }
+
     pub fn window_opacity(id: i64) -> Result<f64, String> {
         Ok(window(id).map_err(|e| e.to_string())?.opacity())
     }

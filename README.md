@@ -49,7 +49,7 @@ fn main() {
 ```toml
 # project.toml
 [dependencies]
-"github.com/gossamer-lang/windowing-gos" = { git = "https://github.com/gossamer-lang/windowing-gos", tag = "v0.1.5" }
+"github.com/gossamer-lang/windowing-gos" = { git = "https://github.com/gossamer-lang/windowing-gos", tag = "v0.1.6" }
 ```
 
 Then run `gos fetch`. You need Gossamer 0.76.0 or later, a Rust toolchain, CMake and a

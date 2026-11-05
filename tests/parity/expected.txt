@@ -154,6 +154,8 @@ move: moving the window: That operation is not supported
 resizable: ok
 bordered: ok
 on top: ok
+every desktop: ok
+on all desktops true
 minimize: minimizing the window: That operation is not supported
 minimized false maximized false
 confined: ok

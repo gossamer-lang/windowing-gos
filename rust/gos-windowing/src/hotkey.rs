@@ -471,12 +471,18 @@ mod platform {
 
         pub(crate) fn unregister(id: u32) {
             let mut grabs = GRABS.lock();
+            let display = grabs.first().map(|g| g.display);
             grabs.retain(|g| {
                 if g.id == id {
                     release(g);
                 }
                 g.id != id
             });
+            if let Some(display) = display
+                && !grabs.iter().any(|g| g.held)
+            {
+                releases::watch(display as *mut Display, false);
+            }
             if grabs.is_empty() {
                 x11_events::unsubscribe(x11_events::HOTKEYS);
             }
@@ -499,29 +505,172 @@ mod platform {
         pub(crate) fn on_event(raw: *mut SdlXEvent) -> bool {
             // SAFETY: SDL hands a complete Xlib event.
             let event = unsafe { &*raw.cast::<XEvent>() };
-            let kind = event.get_type();
-            if kind != xlib::KeyPress && kind != xlib::KeyRelease {
-                return true;
-            }
-            // SAFETY: a key event's union member is `key`.
-            let key = unsafe { event.key };
-            let mut grabs = GRABS.lock();
-            let Some(grab) = grabs
-                .iter_mut()
-                .find(|g| g.keycode == key.keycode && g.state == key.state & MODIFIERS)
-            else {
-                return true;
-            };
-            if kind == xlib::KeyPress {
-                if !grab.held {
-                    grab.held = true;
-                    crate::xlib::note_outside_input(key.time);
-                    super::super::deliver(grab.id);
+            match event.get_type() {
+                xlib::KeyPress => {
+                    // SAFETY: a key event's union member is `key`.
+                    let key = unsafe { event.key };
+                    let mut grabs = GRABS.lock();
+                    let Some(grab) = grabs
+                        .iter_mut()
+                        .find(|g| g.keycode == key.keycode && g.state == key.state & MODIFIERS)
+                    else {
+                        return true;
+                    };
+                    if !grab.held {
+                        grab.held = true;
+                        crate::xlib::note_outside_input(key.time);
+                        releases::watch(grab.display as *mut Display, true);
+                        super::super::deliver(grab.id);
+                    }
+                    false
                 }
-            } else {
-                grab.held = false;
+                // The chord's modifiers may be let go first, so a release
+                // answers to its key alone.
+                xlib::KeyRelease => {
+                    // SAFETY: a key event's union member is `key`.
+                    !released(unsafe { event.key }.keycode)
+                }
+                xlib::GenericEvent => {
+                    // SAFETY: SDL fetched the cookie's data before the hook.
+                    let cookie = unsafe { event.generic_event_cookie };
+                    if let Some(keycode) = releases::keycode(&cookie) {
+                        released(keycode);
+                    }
+                    true
+                }
+                _ => true,
             }
-            false
+        }
+
+        // Ends the hold on every chord of `keycode`, answering whether one
+        // was held.
+        fn released(keycode: u32) -> bool {
+            let mut grabs = GRABS.lock();
+            let mut ended = false;
+            for g in grabs.iter_mut().filter(|g| g.keycode == keycode && g.held) {
+                g.held = false;
+                ended = true;
+            }
+            if ended
+                && let Some(g) = grabs.first()
+                && !grabs.iter().any(|g| g.held)
+            {
+                releases::watch(g.display as *mut Display, false);
+            }
+            ended
+        }
+
+        // SDL gives the keyboard back (XUngrabKeyboard) whenever one of its
+        // windows gains or loses focus, which also ends the grab a chord's
+        // press activated, so the key's core release may go to another
+        // client. XInput2's raw key releases reach the root window whatever
+        // the focus or grab, so while a chord is held this client also takes
+        // those, added to SDL's own selection on the root.
+        mod releases {
+            use std::ffi::{CString, c_int};
+            use std::sync::OnceLock;
+            use std::sync::atomic::{AtomicI32, Ordering};
+
+            use x11_dl::xinput2::{
+                self, XI_LASTEVENT, XI_RawKeyRelease, XIAllMasterDevices, XIEventMask, XIRawEvent,
+                XInput2,
+            };
+            use x11_dl::xlib::{Display, XErrorEvent, XGenericEventCookie};
+
+            // The XInput2 major opcode while raw key releases are selected; 0
+            // otherwise.
+            static WATCHING: AtomicI32 = AtomicI32::new(0);
+
+            fn xinput2() -> Option<&'static XInput2> {
+                static XI: OnceLock<Option<XInput2>> = OnceLock::new();
+                XI.get_or_init(|| XInput2::open().ok()).as_ref()
+            }
+
+            fn opcode(x: &x11_dl::xlib::Xlib, display: *mut Display) -> c_int {
+                let name = CString::new("XInputExtension").expect("a literal without NUL");
+                let (mut opcode, mut event, mut error) = (0, 0, 0);
+                // SAFETY: display is live; the outputs are valid storage.
+                let present = unsafe {
+                    (x.XQueryExtension)(display, name.as_ptr(), &mut opcode, &mut event, &mut error)
+                };
+                if present == 0 { 0 } else { opcode }
+            }
+
+            unsafe extern "C" fn ignore(_display: *mut Display, _error: *mut XErrorEvent) -> c_int {
+                0
+            }
+
+            /// Adds raw key releases to this client's root selection, or
+            /// takes them out again.
+            pub(super) fn watch(display: *mut Display, on: bool) {
+                if (WATCHING.load(Ordering::Acquire) != 0) == on {
+                    return;
+                }
+                let (Some(x), Some(xi)) = (crate::xlib::xlib(), xinput2()) else {
+                    return;
+                };
+                let opcode = opcode(x, display);
+                if opcode == 0 {
+                    return;
+                }
+                // SAFETY: display is SDL's live connection on the main thread;
+                // the selection SDL made is read, copied and freed here.
+                unsafe {
+                    let root = (x.XDefaultRootWindow)(display);
+                    let mut mask = vec![0u8; (XI_LASTEVENT as usize >> 3) + 1];
+                    let mut count = 0;
+                    let selected = (xi.XIGetSelectedEvents)(display, root, &mut count);
+                    if !selected.is_null() {
+                        for m in std::slice::from_raw_parts(selected, count.max(0) as usize) {
+                            if m.deviceid == XIAllMasterDevices && !m.mask.is_null() {
+                                let theirs =
+                                    std::slice::from_raw_parts(m.mask, m.mask_len.max(0) as usize);
+                                if theirs.len() > mask.len() {
+                                    mask.resize(theirs.len(), 0);
+                                }
+                                for (ours, bits) in mask.iter_mut().zip(theirs) {
+                                    *ours |= bits;
+                                }
+                            }
+                        }
+                        (x.XFree)(selected.cast());
+                    }
+                    let byte = XI_RawKeyRelease as usize >> 3;
+                    let bit = 1u8 << (XI_RawKeyRelease & 7);
+                    if on {
+                        xinput2::XISetMask(&mut mask, XI_RawKeyRelease);
+                    } else {
+                        mask[byte] &= !bit;
+                    }
+                    let mut selection = XIEventMask {
+                        deviceid: XIAllMasterDevices,
+                        mask_len: mask.len() as c_int,
+                        mask: mask.as_mut_ptr(),
+                    };
+                    // A server without XInput2 2.0 refuses the selection; that
+                    // leaves the core release as the only one.
+                    let previous = (x.XSetErrorHandler)(Some(ignore));
+                    (xi.XISelectEvents)(display, root, &mut selection, 1);
+                    (x.XSync)(display, 0);
+                    (x.XSetErrorHandler)(previous);
+                }
+                WATCHING.store(if on { opcode } else { 0 }, Ordering::Release);
+            }
+
+            /// The key a raw key release lets go of.
+            pub(super) fn keycode(cookie: &XGenericEventCookie) -> Option<u32> {
+                let opcode = WATCHING.load(Ordering::Acquire);
+                if opcode == 0
+                    || cookie.extension != opcode
+                    || cookie.evtype != XI_RawKeyRelease
+                    || cookie.data.is_null()
+                {
+                    return None;
+                }
+                // SAFETY: an XI_RawKeyRelease cookie's data is an XIRawEvent.
+                let raw = unsafe { &*cookie.data.cast::<XIRawEvent>() };
+                u32::try_from(raw.detail).ok()
+            }
         }
     }
 

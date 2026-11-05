@@ -13,7 +13,8 @@ use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSApplication, NSColor, NSColorSpace, NSDragOperation,
     NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent,
     NSEventModifierFlags, NSEventType, NSFont, NSImage, NSMenu, NSMenuItem, NSPasteboardItem,
-    NSPasteboardWriting, NSView, NSWindow, NSWindowTabbingMode, NSWorkspace,
+    NSPasteboardWriting, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowTabbingMode,
+    NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSData, NSNotification, NSNotificationCenter, NSPoint, NSProcessInfo, NSRect, NSSize,
@@ -58,6 +59,16 @@ pub(crate) fn configure_tabs(
     } else {
         NSWindowTabbingMode::Disallowed
     });
+    Ok(())
+}
+
+/// Lets the window join every Space, or keeps it in its own.
+pub(crate) fn set_all_spaces(ns_window: *mut c_void, on: bool) -> Result<()> {
+    // SAFETY: SDL's live window.
+    let w = unsafe { window(ns_window) }.ok_or_else(|| Error::new("no Cocoa window"))?;
+    let mut behavior = w.collectionBehavior();
+    behavior.set(NSWindowCollectionBehavior::CanJoinAllSpaces, on);
+    w.setCollectionBehavior(behavior);
     Ok(())
 }
 

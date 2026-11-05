@@ -249,6 +249,12 @@ jobs:
       - name: XDND drag between two windows (Linux X11)
         if: runner.os == 'Linux'
         run: tests/xdnd/run.sh
+      - name: Global shortcuts typed through XTEST (Linux X11)
+        if: runner.os == 'Linux'
+        working-directory: rust/gos-windowing
+        env:
+          SDL_VIDEO_DRIVER: x11
+        run: xvfb-run -a sh ../../tools/private-bus.sh -- cargo run --release --example hotkey-check
 
       - name: Platform probe (macOS)
         if: runner.os == 'macOS'

@@ -386,6 +386,8 @@ fn platform(mut app: windowing::App, win: windowing::Window) -> Result<(), error
     report("resizable", win.set_resizable(false))
     report("bordered", win.set_bordered(false))
     report("on top", win.set_always_on_top(true))
+    report("every desktop", win.set_on_all_desktops(true))
+    println(f"on all desktops {win.on_all_desktops()}")
     report("minimize", win.minimize())
     println(f"minimized {win.is_minimized()} maximized {win.is_maximized()}")
     report("confined", win.set_pointer_confined(true))

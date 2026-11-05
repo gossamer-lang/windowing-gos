@@ -1,6 +1,7 @@
 //! The X11 client library, loaded on first use from the copy SDL loaded.
 
 use std::ffi::CString;
+use std::os::raw::c_long;
 use std::sync::OnceLock;
 
 use x11_dl::xlib::{self, Atom, Display, Xlib};
@@ -191,6 +192,7 @@ pub(crate) struct States {
     pub maximized: bool,
     pub fullscreen: bool,
     pub modal: bool,
+    pub sticky: bool,
 }
 
 impl States {
@@ -214,6 +216,9 @@ impl States {
         if self.modal {
             names.push("_NET_WM_STATE_MODAL");
         }
+        if self.sticky {
+            names.push("_NET_WM_STATE_STICKY");
+        }
         names
     }
 }
@@ -236,7 +241,9 @@ pub(crate) fn prepare_map(
         .map(|n| atom(x, display, n))
         .collect();
     let state = atom(x, display, "_NET_WM_STATE");
-    // SAFETY: these are this live SDL window's X handles; `atoms` outlives the call.
+    let desktop = atom(x, display, "_NET_WM_DESKTOP");
+    // SAFETY: these are this live SDL window's X handles; `atoms` and
+    // `every` outlive the calls.
     unsafe {
         if atoms.is_empty() {
             (x.XDeleteProperty)(display, window, state);
@@ -251,6 +258,23 @@ pub(crate) fn prepare_map(
                 atoms.as_ptr().cast(),
                 atoms.len() as i32,
             );
+        }
+        // Without a desktop of its own the window manager maps the window on
+        // the current one.
+        if states.sticky {
+            let every: [c_long; 1] = [ALL_DESKTOPS];
+            (x.XChangeProperty)(
+                display,
+                window,
+                desktop,
+                xlib::XA_CARDINAL,
+                32,
+                xlib::PropModeReplace,
+                every.as_ptr().cast(),
+                1,
+            );
+        } else {
+            (x.XDeleteProperty)(display, window, desktop);
         }
     }
     claim_user_time(x, display, window, siblings);
@@ -267,29 +291,125 @@ pub(crate) fn raise(
     screen: i64,
     siblings: &[u64],
 ) -> crate::Result<()> {
-    use x11_dl::xlib::{ClientMessageData, XClientMessageEvent, XEvent};
     let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
     let display = display as *mut Display;
     let window = window as xlib::Window;
     let time = claim_user_time(x, display, window, siblings);
+    // SAFETY: these are this live SDL window's X handles.
+    unsafe { (x.XRaiseWindow)(display, window) };
+    ask(
+        x,
+        display,
+        window,
+        screen,
+        "_NET_ACTIVE_WINDOW",
+        [1, time as c_long, 0, 0, 0],
+    );
+    Ok(())
+}
+
+/// Puts a shown window on every desktop, or back on the current one alone.
+pub(crate) fn set_sticky(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    screen: i64,
+    on: bool,
+) -> crate::Result<()> {
+    let x = xlib().ok_or_else(|| crate::Error::new("Xlib is unavailable"))?;
+    let display = display as *mut Display;
+    let window = window as xlib::Window;
+    let sticky = atom(x, display, "_NET_WM_STATE_STICKY") as c_long;
+    ask(
+        x,
+        display,
+        window,
+        screen,
+        "_NET_WM_STATE",
+        [c_long::from(on), sticky, 0, 1, 0],
+    );
+    let desktop = if on {
+        ALL_DESKTOPS
+    } else {
+        current_desktop(x, display, screen)
+    };
+    ask(
+        x,
+        display,
+        window,
+        screen,
+        "_NET_WM_DESKTOP",
+        [desktop, 1, 0, 0, 0],
+    );
+    Ok(())
+}
+
+// _NET_WM_DESKTOP's value for a window on every desktop.
+const ALL_DESKTOPS: c_long = 0xFFFF_FFFF;
+
+// The desktop the user is on, or the first when the window manager says none.
+fn current_desktop(x: &Xlib, display: *mut Display, screen: i64) -> c_long {
+    let mut kind: Atom = 0;
+    let (mut format, mut count, mut after) = (0, 0, 0);
+    let mut data: *mut u8 = std::ptr::null_mut();
+    // SAFETY: display is live; the outputs are valid storage and the data
+    // Xlib answers is freed here.
+    unsafe {
+        let root = (x.XRootWindow)(display, screen as i32);
+        let read = (x.XGetWindowProperty)(
+            display,
+            root,
+            atom(x, display, "_NET_CURRENT_DESKTOP"),
+            0,
+            1,
+            0,
+            xlib::XA_CARDINAL,
+            &mut kind,
+            &mut format,
+            &mut count,
+            &mut after,
+            &mut data,
+        );
+        let desktop = if read == 0 && format == 32 && count == 1 && !data.is_null() {
+            *data.cast::<c_long>()
+        } else {
+            0
+        };
+        if !data.is_null() {
+            (x.XFree)(data.cast());
+        }
+        desktop
+    }
+}
+
+// Sends the window manager an EWMH request about `window`, as a normal
+// application (source 1).
+fn ask(
+    x: &Xlib,
+    display: *mut Display,
+    window: xlib::Window,
+    screen: i64,
+    request: &str,
+    data: [c_long; 5],
+) {
+    use x11_dl::xlib::{ClientMessageData, XClientMessageEvent, XEvent};
     let mut message = XClientMessageEvent {
         type_: xlib::ClientMessage,
         serial: 0,
         send_event: 1,
         display,
         window,
-        message_type: atom(x, display, "_NET_ACTIVE_WINDOW"),
+        message_type: atom(x, display, request),
         format: 32,
         data: ClientMessageData::new(),
     };
-    message.data.set_long(0, 1);
-    message.data.set_long(1, time as std::os::raw::c_long);
+    for (i, value) in data.into_iter().enumerate() {
+        message.data.set_long(i, value);
+    }
     let mut event = XEvent {
         client_message: message,
     };
     // SAFETY: these are this live SDL window's X handles.
     unsafe {
-        (x.XRaiseWindow)(display, window);
         (x.XSendEvent)(
             display,
             (x.XRootWindow)(display, screen as i32),
@@ -299,7 +419,6 @@ pub(crate) fn raise(
         );
         (x.XFlush)(display);
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -324,8 +443,9 @@ mod tests {
             maximized: true,
             fullscreen: true,
             modal: true,
+            sticky: true,
         };
-        assert_eq!(all.names().len(), 7);
+        assert_eq!(all.names().len(), 8);
         assert_eq!(
             States {
                 above: true,

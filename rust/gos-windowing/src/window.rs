@@ -9,8 +9,9 @@ use sdl3_sys::mouse::{
     SDL_GetWindowRelativeMouseMode, SDL_SetWindowRelativeMouseMode, SDL_WarpMouseInWindow,
 };
 use sdl3_sys::properties::{
-    SDL_CreateProperties, SDL_DestroyProperties, SDL_GetPointerProperty, SDL_PropertiesID,
-    SDL_SetBooleanProperty, SDL_SetNumberProperty, SDL_SetPointerProperty, SDL_SetStringProperty,
+    SDL_CreateProperties, SDL_DestroyProperties, SDL_GetBooleanProperty, SDL_GetPointerProperty,
+    SDL_PropertiesID, SDL_SetBooleanProperty, SDL_SetNumberProperty, SDL_SetPointerProperty,
+    SDL_SetStringProperty,
 };
 use sdl3_sys::rect::SDL_Rect;
 use sdl3_sys::stdinc::SDL_free;
@@ -369,6 +370,49 @@ impl Window {
         )
     }
 
+    /// Shows the window on every virtual desktop (workspace, Space) rather
+    /// than on one. X11 marks it sticky, also across hiding and showing it
+    /// again, and macOS lets it join every Space; Windows and Wayland give
+    /// applications no way to ask, so there it stays on its own desktop.
+    pub fn set_on_all_desktops(&self, on: bool) -> Result<()> {
+        support::require_main_thread("Window::set_on_all_desktops");
+        // SAFETY: handle is live; the name is a NUL-terminated literal.
+        let kept = unsafe {
+            SDL_SetBooleanProperty(
+                SDL_GetWindowProperties(self.handle),
+                ALL_DESKTOPS.as_ptr(),
+                on,
+            )
+        };
+        support::check(kept, "keeping the window on every desktop")?;
+        #[cfg(target_os = "linux")]
+        if self.is_visible()
+            && let Ok(crate::surface::RawHandle::Xlib {
+                display,
+                window,
+                screen,
+            }) = self.raw_handle()
+        {
+            crate::xlib::set_sticky(display, window, screen, on)?;
+        }
+        #[cfg(target_os = "macos")]
+        crate::macos::set_all_spaces(self.appkit_window()?, on)?;
+        Ok(())
+    }
+
+    /// Whether the window was asked onto every virtual desktop.
+    pub fn on_all_desktops(&self) -> bool {
+        support::require_main_thread("Window::on_all_desktops");
+        // SAFETY: handle is live; the name is a NUL-terminated literal.
+        unsafe {
+            SDL_GetBooleanProperty(
+                SDL_GetWindowProperties(self.handle),
+                ALL_DESKTOPS.as_ptr(),
+                false,
+            )
+        }
+    }
+
     pub fn opacity(&self) -> f64 {
         support::require_main_thread("Window::opacity");
         // SAFETY: handle is live.
@@ -408,6 +452,7 @@ impl Window {
             maximized: self.flag(SDL_WINDOW_MAXIMIZED),
             fullscreen: self.flag(SDL_WINDOW_FULLSCREEN),
             modal: self.flag(SDL_WINDOW_MODAL),
+            sticky: self.on_all_desktops(),
         }
     }
 
@@ -1028,6 +1073,9 @@ struct IconPixels {
 }
 
 /// The icon `App::set_icon` gave the application.
+// The window property that remembers `set_on_all_desktops`.
+const ALL_DESKTOPS: &std::ffi::CStr = c"gos.windowing.all-desktops";
+
 static APP_ICON: Mutex<Option<IconPixels>> = Mutex::new(None);
 
 /// Makes `width` x `height` RGBA pixels the icon of every open window and of

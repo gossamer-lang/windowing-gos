@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6 - Every shortcut press, every desktop
+
+- On X11 every press of a global shortcut arrives, including the one after a press that hid or showed a window and the one after a chord whose modifier was let go first.
+- `Window::set_on_all_desktops` shows a window on every virtual desktop: sticky on X11, kept when the window is hidden and shown again, and joining every Space on macOS. Windows and Wayland give applications no way to ask.
+
 ## 0.1.5 - Platform check under sway
 
 - The `platform-check` example resizes its window before it shows a frame, so it passes under sway, which sizes a floating Xwayland window to each buffer of a new size.
