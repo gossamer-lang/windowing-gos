@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7 - Focus from a global shortcut
+
+- On X11 a window that `Window::focus` brings forward after a press of a global shortcut takes focus even when the window manager would hold it back as focus stealing: the request says it is the user's own action. Later requests without a new press stay ordinary.
+
 ## 0.1.6 - Every shortcut press, every desktop
 
 - On X11 every press of a global shortcut arrives, including the one after a press that hid or showed a window and the one after a chord whose modifier was let go first.

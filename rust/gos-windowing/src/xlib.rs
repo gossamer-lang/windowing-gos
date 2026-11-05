@@ -107,6 +107,20 @@ pub(crate) fn note_outside_input(time: std::os::raw::c_ulong) {
     OUTSIDE_INPUT.store(u64::from(time as u32), std::sync::atomic::Ordering::Relaxed);
 }
 
+// The shortcut press whose time a focus request last spent; 0 for none.
+static SPENT_INPUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Whether a focus request claiming `time` is a direct user action: a global
+/// shortcut press newer than any input on the application's own windows,
+/// not spent by an earlier request. Each press entitles one.
+fn shortcut_entitles(time: u32) -> bool {
+    use std::sync::atomic::Ordering;
+    let outside = OUTSIDE_INPUT.load(Ordering::Relaxed) as u32;
+    outside != 0
+        && time == outside
+        && SPENT_INPUT.swap(u64::from(outside), Ordering::Relaxed) as u32 != outside
+}
+
 // X server times are 32-bit milliseconds that wrap; the later of two is the
 // one less than half the range ahead. 0 means none.
 fn later(a: u32, b: u32) -> u32 {
@@ -295,6 +309,10 @@ pub(crate) fn raise(
     let display = display as *mut Display;
     let window = window as xlib::Window;
     let time = claim_user_time(x, display, window, siblings);
+    // EWMH's source 2 marks a direct user action, which a window manager
+    // does not hold back as focus stealing; an application's own request is
+    // source 1, weighed against what the user did since.
+    let source = if shortcut_entitles(time) { 2 } else { 1 };
     // SAFETY: these are this live SDL window's X handles.
     unsafe { (x.XRaiseWindow)(display, window) };
     ask(
@@ -303,7 +321,7 @@ pub(crate) fn raise(
         window,
         screen,
         "_NET_ACTIVE_WINDOW",
-        [1, time as c_long, 0, 0, 0],
+        [source, time as c_long, 0, 0, 0],
     );
     Ok(())
 }
@@ -424,6 +442,20 @@ fn ask(
 #[cfg(test)]
 mod tests {
     use super::{States, later};
+
+    #[test]
+    fn a_shortcut_press_entitles_one_direct_activation() {
+        use std::sync::atomic::Ordering;
+        super::OUTSIDE_INPUT.store(500, Ordering::Relaxed);
+        assert!(
+            !super::shortcut_entitles(700),
+            "later input on a window of its own"
+        );
+        assert!(super::shortcut_entitles(500));
+        assert!(!super::shortcut_entitles(500), "spent");
+        super::note_outside_input(900);
+        assert!(super::shortcut_entitles(900), "a new press");
+    }
 
     #[test]
     fn the_later_server_time_wins_across_a_wrap() {
