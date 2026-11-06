@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.9 - Leaner macOS windows
+
+- A window on macOS keeps only the buffer it shows in memory: the buffers it painted earlier frames into go back to the system as soon as the window server stops reading them, so they no longer count toward the program's memory, and the next frame takes them back.
+
 ## 0.1.8 - Forwarded command lines
 
 - `instance::Request::CommandLine { directory, arguments }` hands a later launch's own command line, and the folder it ran in, to the running instance: on Linux as the `command-line` action of `org.freedesktop.Application`, elsewhere over the existing loopback forwarding.

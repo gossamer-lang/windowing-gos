@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_void;
+use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
@@ -15,8 +16,8 @@ use objc2_core_foundation::{
     CFNumber, CFRetained, CFString, CFType, CGFloat, CGPoint, CGRect, CGSize,
 };
 use objc2_io_surface::{
-    IOSurfaceLockOptions, IOSurfaceRef, kIOSurfaceBytesPerElement, kIOSurfaceBytesPerRow,
-    kIOSurfaceHeight, kIOSurfacePixelFormat, kIOSurfaceWidth,
+    IOSurfaceLockOptions, IOSurfacePurgeabilityState, IOSurfaceRef, kIOSurfaceBytesPerElement,
+    kIOSurfaceBytesPerRow, kIOSurfaceHeight, kIOSurfacePixelFormat, kIOSurfaceWidth,
 };
 use objc2_quartz_core::{CALayer, CATransaction, kCAGravityTopLeft};
 use sdl3_sys::properties::SDL_GetPointerProperty;
@@ -42,6 +43,9 @@ struct Buffer {
     surface: CFRetained<IOSurfaceRef>,
     // The frame the buffer holds; a new buffer holds none.
     frame: Option<u64>,
+    // A volatile buffer's pages are the system's to reclaim, and while they
+    // stay volatile they are not part of the process's memory footprint.
+    volatile: bool,
 }
 
 struct LayerSurface {
@@ -56,6 +60,11 @@ struct LayerSurface {
     // What each of the latest frames changed, by frame number, so a buffer
     // holding an earlier frame catches up by copying only those rectangles.
     history: VecDeque<(u64, Vec<Rect>)>,
+    // One refresh of the window's display.
+    refresh: Duration,
+    // When to look again at a buffer the window server still reads, and the
+    // wait that led there.
+    recheck: Option<(Instant, Duration)>,
 }
 
 thread_local! {
@@ -154,6 +163,19 @@ pub(crate) fn capture(window: &Window) -> Result<Option<Captured>> {
     })
 }
 
+/// Hands every buffer a window no longer shows back to the system to
+/// reclaim, once the window server has stopped reading it. Answers how long
+/// the caller may wait before calling again while it still reads one.
+pub(crate) fn retire() -> Option<Duration> {
+    let now = Instant::now();
+    SURFACES.with_borrow_mut(|surfaces| {
+        surfaces
+            .values_mut()
+            .filter_map(|surface| surface.settle(now))
+            .min()
+    })
+}
+
 /// Takes the window's layer and buffers away, as a GPU compositor takes
 /// over its drawing or the window closes.
 pub(crate) fn release(window: &Window) {
@@ -188,7 +210,59 @@ impl LayerSurface {
             front: None,
             frame: 0,
             history: VecDeque::new(),
+            refresh: refresh(window),
+            recheck: None,
         })
+    }
+
+    // Retires the buffers this window no longer shows, checking again one
+    // refresh later, then at twice each previous wait, while the window
+    // server still reads one.
+    fn settle(&mut self, now: Instant) -> Option<Duration> {
+        if let Some((due, _)) = self.recheck
+            && now < due
+        {
+            return Some(due - now);
+        }
+        let mut reading = false;
+        for (i, buffer) in self.buffers.iter_mut().enumerate() {
+            if Some(i) == self.front || buffer.volatile {
+                continue;
+            }
+            if buffer.surface.is_in_use() {
+                reading = true;
+            } else {
+                buffer.volatile = purgeable(
+                    &buffer.surface,
+                    IOSurfacePurgeabilityState::PurgeableVolatile,
+                )
+                .is_some();
+            }
+        }
+        if !reading {
+            self.recheck = None;
+            return None;
+        }
+        let wait = self.recheck.map_or(self.refresh, |(_, wait)| wait * 2);
+        self.recheck = Some((now + wait, wait));
+        Some(wait)
+    }
+
+    // Takes buffer `index` back from the system before it is painted; a
+    // buffer whose pages the system reclaimed holds no frame.
+    fn reclaim(&mut self, index: usize) {
+        let buffer = &mut self.buffers[index];
+        if !buffer.volatile {
+            return;
+        }
+        buffer.volatile = false;
+        if purgeable(
+            &buffer.surface,
+            IOSurfacePurgeabilityState::PurgeableNonVolatile,
+        ) == Some(IOSurfacePurgeabilityState::PurgeableEmpty)
+        {
+            buffer.frame = None;
+        }
     }
 
     // A buffer to paint: one the window server is not reading, a new one
@@ -245,6 +319,7 @@ impl LayerSurface {
         paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
     ) -> Result<()> {
         let back = self.target()?;
+        self.reclaim(back);
         {
             let mut target =
                 Locked::new(&self.buffers[back].surface, IOSurfaceLockOptions::empty())?;
@@ -276,6 +351,8 @@ impl LayerSurface {
         }
         self.show(window, back);
         self.front = Some(back);
+        self.refresh = refresh(window);
+        self.recheck = None;
         Ok(())
     }
 
@@ -304,6 +381,27 @@ impl LayerSurface {
         }
         CATransaction::commit();
     }
+}
+
+// One refresh of the window's display, or of a 60 Hz one when it reports
+// no rate.
+fn refresh(window: &Window) -> Duration {
+    let rate = window
+        .display()
+        .map_or(0.0, |display| display.mode.refresh_rate);
+    Duration::from_secs_f64(1.0 / if rate > 0.0 { rate } else { 60.0 })
+}
+
+// Sets how the system may treat `surface`'s pages; answers the state they
+// were in, or `None` when the system refused.
+fn purgeable(
+    surface: &IOSurfaceRef,
+    state: IOSurfacePurgeabilityState,
+) -> Option<IOSurfacePurgeabilityState> {
+    let mut old = 0;
+    // SAFETY: the surface is live and `old` is storage the call fills.
+    let status = unsafe { surface.set_purgeable(state.0, &mut old) };
+    (status == 0).then_some(IOSurfacePurgeabilityState(old))
 }
 
 // The window's size in points, the units of its views and layers.
@@ -381,6 +479,7 @@ fn buffer(width: i64, height: i64) -> Result<Buffer> {
     Ok(Buffer {
         surface,
         frame: None,
+        volatile: false,
     })
 }
 

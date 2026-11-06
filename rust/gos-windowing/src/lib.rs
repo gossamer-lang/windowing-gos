@@ -45,7 +45,7 @@ mod xlib;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sdl3_sys::events::{SDL_Event, SDL_PollEvent, SDL_RegisterEvents, SDL_WaitEventTimeout};
 use sdl3_sys::hints::{
@@ -85,7 +85,7 @@ pub use window::{
 pub use window::{Window, WindowId, WindowKind, WindowOptions};
 
 /// The library's version.
-pub const VERSION: &str = "0.1.8";
+pub const VERSION: &str = "0.1.9";
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.
@@ -210,6 +210,19 @@ fn set_hint(name: *const std::ffi::c_char, variable: &str, value: &str) -> Resul
     Err(support::failure(&format!("setting {variable}")))
 }
 
+// What the main thread gives back before it waits: its freed memory, and on
+// macOS the window buffers no longer shown. Answers how long the wait may
+// last before it should come back for more.
+fn before_wait() -> Option<Duration> {
+    let release = idle::thread_idle();
+    #[cfg(target_os = "macos")]
+    let release = match (release, macos::layer::retire()) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    };
+    release
+}
+
 fn new_event() -> SDL_Event {
     // SAFETY: an all-zero SDL_Event is a valid value of the union.
     unsafe { std::mem::zeroed() }
@@ -271,7 +284,7 @@ impl App {
         support::require_main_thread("App::wait");
         let mut e = new_event();
         loop {
-            let slice = idle::thread_idle().map_or(-1, idle::millis);
+            let slice = before_wait().map_or(-1, idle::millis);
             let slice = support::c_int(slice, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
             if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {
@@ -296,7 +309,7 @@ impl App {
             if left < 0 {
                 return Ok(None);
             }
-            let bound = idle::thread_idle().map_or(left, |due| idle::millis(due).min(left));
+            let bound = before_wait().map_or(left, |due| idle::millis(due).min(left));
             let slice = support::c_int(bound, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
             if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {

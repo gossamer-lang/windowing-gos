@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "gos-windowing"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "block2",
  "getrandom",
