@@ -188,6 +188,7 @@ fn common(kind: SDL_EventType) -> Result<()> {
         r#type: kind.0,
         reserved: 0,
         timestamp: 0,
+        ..Default::default()
     };
     push(e)
 }
@@ -201,6 +202,7 @@ fn window_event(kind: SDL_EventType, window: WindowId, data1: i64, data2: i64) -
         windowID: wid(window),
         data1: data1 as i32,
         data2: data2 as i32,
+        ..Default::default()
     };
     push(e)
 }
@@ -214,6 +216,7 @@ fn display_event(kind: SDL_EventType, display: DisplayId, data1: i32) -> Result<
         displayID: SDL_DisplayID(display.0),
         data1,
         data2: 0,
+        ..Default::default()
     };
     push(e)
 }
@@ -226,6 +229,7 @@ fn pinch_event(kind: SDL_EventType, window: WindowId, scale: f64) -> Result<()> 
         timestamp: 0,
         scale: scale as f32,
         windowID: wid(window),
+        ..Default::default()
     };
     push(e)
 }
@@ -238,6 +242,7 @@ fn pen_proximity(kind: SDL_EventType, window: WindowId, pen: u32) -> Result<()> 
         timestamp: 0,
         windowID: wid(window),
         which: SDL_PenID(pen),
+        ..Default::default()
     };
     push(e)
 }
@@ -259,6 +264,7 @@ fn pen_button(down: bool, window: WindowId, pen: u32, button: i64, x: f64, y: f6
         y: y as f32,
         button: button as u8,
         down,
+        ..Default::default()
     };
     push(e)
 }
@@ -284,6 +290,7 @@ fn pen_touch(down: bool, window: WindowId, pen: u32, x: f64, y: f64, eraser: boo
         y: y as f32,
         eraser,
         down,
+        ..Default::default()
     };
     push(e)
 }
@@ -317,6 +324,7 @@ fn touch(
         dy: dy as f32 / h,
         pressure: pressure as f32,
         windowID: wid(window),
+        ..Default::default()
     };
     push(e)
 }
@@ -333,6 +341,7 @@ fn drop_event(kind: SDL_EventType, window: WindowId, data: &str, x: f64, y: f64)
         y: y as f32,
         source: copy,
         data: copy,
+        ..Default::default()
     };
     keep_if_queued(push(e), copy)
 }
@@ -373,6 +382,7 @@ impl App {
                     raw: 0,
                     down: true,
                     repeat,
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -395,6 +405,7 @@ impl App {
                     raw: 0,
                     down: false,
                     repeat: false,
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -407,6 +418,7 @@ impl App {
                     timestamp: 0,
                     windowID: wid(window),
                     text: copy,
+                    ..Default::default()
                 };
                 keep_if_queued(push(e), copy)
             }
@@ -426,6 +438,7 @@ impl App {
                     text: copy,
                     start: cursor as i32,
                     length: selection as i32,
+                    ..Default::default()
                 };
                 keep_if_queued(push(e), copy)
             }
@@ -450,6 +463,7 @@ impl App {
                     y: y as f32,
                     xrel: dx as f32,
                     yrel: dy as f32,
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -511,6 +525,7 @@ impl App {
                     mouse_y: y as f32,
                     integer_x: dx as i32,
                     integer_y: dy as i32,
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -626,6 +641,7 @@ impl App {
                     pen_state: SDL_PenInputFlags(bits),
                     x: x as f32,
                     y: y as f32,
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -693,6 +709,7 @@ impl App {
                     owner: owned,
                     num_mime_types: 0,
                     mime_types: std::ptr::null_mut(),
+                    ..Default::default()
                 };
                 push(e)
             }
@@ -804,6 +821,7 @@ impl App {
                     y: y as f32,
                     axis: SDL_PenAxis(pen_axis_code(axis)),
                     value: value as f32,
+                    ..Default::default()
                 };
                 push(e)
             }

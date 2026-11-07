@@ -58,6 +58,7 @@ pub(crate) fn push_user_event(
         code,
         data1: data1 as usize as *mut std::ffi::c_void,
         data2: data2 as usize as *mut std::ffi::c_void,
+        ..Default::default()
     };
     // SAFETY: event is a fully initialized union SDL copies.
     support::check(unsafe { SDL_PushEvent(&mut event) }, "queueing an event")

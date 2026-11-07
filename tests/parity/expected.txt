@@ -1,5 +1,5 @@
 == driver
-offscreen sdl 3.4.10
+offscreen sdl 3.4.20
 == windows
 title first size (320, 200) pixels (320, 200) scale 1
 resized (400, 300) (400, 300)
@@ -151,9 +151,9 @@ fullscreen true
 windowed: ok
 position (352, 284)
 move: moving the window: That operation is not supported
-resizable: ok
-bordered: ok
-on top: ok
+resizable: setting resizability: That operation is not supported
+bordered: setting the border: That operation is not supported
+on top: setting always-on-top: That operation is not supported
 every desktop: ok
 on all desktops true
 minimize: minimizing the window: That operation is not supported

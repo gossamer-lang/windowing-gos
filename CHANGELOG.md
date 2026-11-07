@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11 - Wayland windows that open reliably
+
+- Builds SDL 3.4.20 with a fix for a window under libdecor (GNOME and other desktops that draw no title bars) that could wait forever for its first configure while another thread read the display; with nothing else drawing, opening a second window could hang the program.
+- On a driver that cannot change a window's border, resizability or always-on-top, as SDL 3.4.20's offscreen driver cannot, setting them answers that the operation is not supported instead of succeeding without effect.
+
 ## 0.1.10 - FreeBSD desktops, leaner Wayland windows
 
 - FreeBSD desktops take the X11, Wayland, and D-Bus paths Linux does: drag and drop, global shortcuts, desktop notifications, appearance preferences, focus by activation token, and the single-instance claim on the session bus work there, where each answered unavailable.
