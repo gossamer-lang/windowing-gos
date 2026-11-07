@@ -9,7 +9,7 @@
 pub mod access;
 #[cfg(target_os = "macos")]
 mod axmac;
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub mod bus;
 pub mod capabilities;
 pub mod clipboard;
@@ -38,9 +38,11 @@ pub mod tray;
 #[cfg(target_os = "windows")]
 mod uia;
 mod waker;
+#[cfg(free_unix)]
+mod wayland_shm;
 mod win32;
 pub mod window;
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod xlib;
 
 use std::sync::Arc;
@@ -85,7 +87,7 @@ pub use window::{
 pub use window::{Window, WindowId, WindowKind, WindowOptions};
 
 /// The library's version.
-pub const VERSION: &str = "0.1.9";
+pub const VERSION: &str = "0.1.10";
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.
@@ -171,12 +173,12 @@ pub fn init(name: &str, options: &InitOptions) -> Result<App> {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn preserve_driver_globals(driver: &str) -> bool {
     driver != "x11" || hooks::preserve_x11_owners()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 fn preserve_driver_globals(_driver: &str) -> bool {
     true
 }
@@ -185,11 +187,12 @@ fn preserve_driver_globals(_driver: &str) -> bool {
 // present it through a framebuffer of their own (X11 shared memory, plain
 // memory offscreen), which keeps SDL from backing it with an OpenGL renderer
 // that loads the GL driver into the process; offscreen on macOS has no GL
-// driver at all. Wayland has no such framebuffer and always presents through
-// a renderer. SDL's unaccelerated framebuffer presents nothing on recent
-// macOS, and the other platforms' accelerated paths load no GL driver.
+// driver at all. Wayland has no such framebuffer in SDL, so windowing keeps
+// shared-memory buffers of its own there (wayland_shm.rs). SDL's
+// unaccelerated framebuffer presents nothing on recent macOS, and the other
+// platforms' accelerated paths load no GL driver.
 fn software_framebuffer_hint(driver: &str) -> Result<()> {
-    if driver == "offscreen" || (cfg!(target_os = "linux") && driver == "x11") {
+    if driver == "offscreen" || (cfg!(free_unix) && driver == "x11") {
         return set_hint(
             SDL_HINT_FRAMEBUFFER_ACCELERATION,
             "SDL_FRAMEBUFFER_ACCELERATION",
@@ -239,6 +242,8 @@ impl App {
         win32::shutdown();
         #[cfg(target_os = "macos")]
         macos::layer::release_all();
+        #[cfg(free_unix)]
+        wayland_shm::release_all();
         // Quitting removes the live-resize watch and destroys the property
         // holding its hook, which releases the hook.
         // SAFETY: ends the session on the main thread.

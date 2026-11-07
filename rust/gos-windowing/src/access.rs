@@ -4,7 +4,7 @@
 //! `update`, as a flat list of elements; the providers answer the screen
 //! reader's queries from the latest list on the main thread, and queue what
 //! it asks the program to do, which `take_requests` hands over after an
-//! `Event::Wake`. On Linux the toolkit speaks AT-SPI over D-Bus itself, so
+//! `Event::Wake`. On Linux and FreeBSD the toolkit speaks AT-SPI over D-Bus itself, so
 //! `has_provider` answers false there.
 //!
 //! Element bounds are in the window's framebuffer pixels, the unit the

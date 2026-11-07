@@ -1,5 +1,5 @@
 //! System tray icons (the notification area on Windows, status items on
-//! macOS, StatusNotifierItem on Linux) with a native menu. A chosen item
+//! macOS, StatusNotifierItem on Linux and FreeBSD) with a native menu. A chosen item
 //! arrives as `Event::MenuSelected` with `MenuSource::Tray`.
 
 use std::ffi::c_void;

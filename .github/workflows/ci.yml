@@ -311,6 +311,47 @@ jobs:
           SDL_VIDEO_DRIVER: cocoa
         run: cargo run --release --example platform-check
 
+  # FreeBSD has no hosted runner, so the suite runs in a FreeBSD VM: the unit
+  # suite and tier parity offscreen, every example, then real X11 (Xvfb) and
+  # Wayland (headless sway, as FreeBSD packages no Weston) with the
+  # single-instance hand-off, platform probe, XDND drag, and XTEST shortcuts.
+  freebsd:
+    name: test, parity, and real drivers (FreeBSD)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test in FreeBSD
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          mem: 12288
+          copyback: false
+          envs: GOSSAMER_REPO SDL_VIDEO_DRIVER
+          prepare: |
+            pkg install -y bash curl git cmake ninja pkgconf python3 llvm22 dbus \
+              xorg-vfbserver sway libX11 libXext libXrandr libXcursor libXi libXfixes \
+              libXScrnSaver libXtst libxkbcommon wayland wayland-protocols libdecor mesa-libs
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.95.0
+            curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          run: |
+            set -e
+            export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+            gos --version
+            gos test .
+            tests/parity/run.sh
+            for dir in examples/*/; do
+              (cd "$dir" && gos build --release .)
+            done
+            tests/smoke/run.sh
+            tests/instance/run.sh
+            tests/xdnd/run.sh
+            Xvfb :90 -screen 0 1024x768x24 >/dev/null 2>&1 &
+            until [ -e /tmp/.X11-unix/X90 ]; do sleep 0.1; done
+            export DISPLAY=:90
+            (cd tests/platform && gos build --release . && sh ../../tools/private-bus.sh -- ./target/release/windowing-platform)
+            (cd rust/gos-windowing && sh ../../tools/private-bus.sh -- cargo run --release --example hotkey-check)
+
   # Idle memory, threads and wakeups and event cost, held to budgets set
   # against the same programs written in C on the same runner.
   performance:

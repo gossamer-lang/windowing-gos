@@ -43,7 +43,7 @@ fn pump(app: &App, duration: Duration) -> Result<()> {
     }
     Ok(())
 }
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn cpu_ns() -> Result<u64> {
     let mut time = libc::timespec {
         tv_sec: 0,
@@ -110,7 +110,7 @@ fn child(app: &App, id: &str, done: &Path) -> Result<()> {
     if !window.has_focus() {
         return Err("the secondary launch did not take the foreground".into());
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     {
         use std::collections::HashMap;
         use zbus::zvariant::Value;
@@ -130,7 +130,7 @@ fn child(app: &App, id: &str, done: &Path) -> Result<()> {
             &(uris(), platform),
         )?;
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(free_unix))]
     if !matches!(
         instance::claim(id, Request::Open { uris: uris() })?,
         Claim::Forwarded
@@ -183,7 +183,7 @@ fn primary(app: &App, id: &str, done: &Path) -> Result<()> {
     if !window.has_focus() {
         return Err("existing primary did not receive keyboard focus".into());
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     {
         let began = cpu_ns()?;
         pump(app, Duration::from_millis(500))?;

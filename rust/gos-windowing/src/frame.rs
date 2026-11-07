@@ -93,7 +93,7 @@ pub(crate) fn reapply() {
 // X11 window managers that draw GTK-style frames read the variant from the
 // `_GTK_THEME_VARIANT` property of the client window; no property means the
 // desktop's theme.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn set_theme_variant(display: *mut c_void, window: u64, code: i64) -> Result<()> {
     let x = crate::xlib::xlib().ok_or_else(|| Error::new("loading the X11 library"))?;
     let display = display.cast::<x11_dl::xlib::Display>();
@@ -121,7 +121,7 @@ fn set_theme_variant(display: *mut c_void, window: u64, code: i64) -> Result<()>
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 fn set_theme_variant(_display: *mut c_void, _window: u64, _code: i64) -> Result<()> {
     Err(Error::new("X11 frames need Linux"))
 }

@@ -4,6 +4,9 @@
 # (Xvfb, or Xephyr nested in the current display), and checks every tier
 # reports the drop.
 set -e
+# No session bus: with none named, the first D-Bus client would autolaunch one
+# that outlives the run and holds the captured output open.
+export DBUS_SESSION_BUS_ADDRESS=disabled:
 cd "$(dirname "$0")"
 GOS=${GOS:-gos}
 export SDL_VIDEO_DRIVER=x11

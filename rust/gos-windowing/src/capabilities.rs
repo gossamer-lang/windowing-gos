@@ -37,7 +37,7 @@ pub fn capabilities() -> Capabilities {
                 feature.support = Support::Unavailable;
                 feature.detail = "No current pointer seat/data-device source".into();
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(free_unix)]
             if feature.name == "activation" && !crate::drag::has_activation() {
                 feature.support = Support::Unavailable;
                 feature.detail = "Compositor did not advertise xdg_activation_v1".into();

@@ -295,7 +295,7 @@ pub(crate) fn remove_live_resize() -> Result<()> {
 /// display connections at shutdown, then unloads Xlib. Pinning the library
 /// SDL already loaded keeps those caches owned and reusable. This holds no
 /// SDL session or display connection open.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn preserve_x11_owners() -> bool {
     // NOLOAD promotes only the library SDL already loaded. NODELETE keeps
     // its static storage alive; close balances the temporary loader ref.
@@ -312,7 +312,7 @@ pub(crate) fn preserve_x11_owners() -> bool {
 /// SDL keeps one X11 event hook. Each part of the library that reads raw X
 /// events subscribes here, and the one hook offers every event to each
 /// subscriber until one consumes it.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) mod x11_events {
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicU8, Ordering};

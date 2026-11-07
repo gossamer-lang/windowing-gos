@@ -26,7 +26,12 @@ for tier in vm jit debug release; do
             sleep 0.1
         done
         run --command-line -e htop "a b" ""
-        XDG_ACTIVATION_TOKEN=context-token DESKTOP_STARTUP_ID=context-startup run "/tmp/notes.txt" "/tmp/a b.txt"
+        # Exported in a subshell: POSIX leaves it unspecified whether
+        # assignments before a function call reach the commands it runs.
+        (
+            export XDG_ACTIVATION_TOKEN=context-token DESKTOP_STARTUP_ID=context-startup
+            run "/tmp/notes.txt" "/tmp/a b.txt"
+        )
         wait "$primary"
         cat "$log"
         rm -f "$log"

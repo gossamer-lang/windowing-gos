@@ -108,7 +108,7 @@ pub type Claim = instance::Claim
 pub type InstanceRequest = instance::Request
 
 /// The library's version.
-pub const VERSION: String = "0.1.9"
+pub const VERSION: String = "0.1.10"
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.

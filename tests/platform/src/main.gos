@@ -39,7 +39,7 @@ fn read_back(win: windowing::Window, attribute: u32) -> Option<i32> {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod x11 {
     use std::ffi
     use std::ffi::Ptr
@@ -73,7 +73,7 @@ mod x11 {
 }
 
 // The frame theme is attribute 20; X11 has no backdrop.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn read_back(win: windowing::Window, attribute: u32) -> Option<i32> {
     match win.raw_handle() {
         Ok(windowing::RawHandle::Xlib { display, window, .. }) if attribute == 20 => x11::variant(display, window)
@@ -81,7 +81,7 @@ fn read_back(win: windowing::Window, attribute: u32) -> Option<i32> {
     }
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "freebsd")))]
 fn read_back(_win: windowing::Window, _attribute: u32) -> Option<i32> {
     None
 }

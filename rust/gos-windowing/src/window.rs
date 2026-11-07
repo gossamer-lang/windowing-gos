@@ -145,6 +145,8 @@ impl Window {
         crate::access::detach(self);
         #[cfg(target_os = "macos")]
         crate::macos::layer::release(self);
+        #[cfg(free_unix)]
+        crate::wayland_shm::release(self);
         // SAFETY: handle is a live window on the main thread.
         unsafe { SDL_DestroyWindow(self.handle) }
     }
@@ -385,7 +387,7 @@ impl Window {
             )
         };
         support::check(kept, "keeping the window on every desktop")?;
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         if self.is_visible()
             && let Ok(crate::surface::RawHandle::Xlib {
                 display,
@@ -432,7 +434,7 @@ impl Window {
         support::require_main_thread("Window::show");
         // X11 window managers forget a withdrawn window's state, and SDL maps
         // it again without restating it.
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         if !self.is_visible()
             && let Ok(crate::surface::RawHandle::Xlib {
                 display, window, ..
@@ -444,7 +446,7 @@ impl Window {
         support::check(unsafe { SDL_ShowWindow(self.handle) }, "showing the window")
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     fn kept_states(&self) -> crate::xlib::States {
         crate::xlib::States {
             above: self.flag(SDL_WINDOW_ALWAYS_ON_TOP),
@@ -468,7 +470,7 @@ impl Window {
         support::require_main_thread("Window::focus");
         // SDL asks as of the last input on its own windows, which a window
         // manager refuses once another window has had input since.
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         match self.raw_handle() {
             Ok(crate::surface::RawHandle::Xlib {
                 display,
@@ -496,7 +498,7 @@ impl Window {
     /// two-second deadline. Other video drivers answer an empty token.
     pub fn activation_token(&self) -> Result<String> {
         support::require_main_thread("Window::activation_token");
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         if crate::video_driver() == "wayland" {
             return crate::drag::activation_token(self);
         }
@@ -507,7 +509,7 @@ impl Window {
     pub fn focus_with_context(&self, activation: &crate::instance::Activation) -> Result<()> {
         activation.validate()?;
         self.focus_with_activation(&activation.token)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         if !activation.startup_id.is_empty()
             && let crate::surface::RawHandle::Xlib {
                 display,
@@ -528,7 +530,7 @@ impl Window {
         if token.len() > 4096 || token.contains('\0') {
             return Err(Error::new("invalid desktop activation token"));
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(free_unix)]
         if !token.is_empty() && crate::video_driver() == "wayland" {
             return crate::drag::activate(self, token);
         }
@@ -1101,7 +1103,7 @@ pub(crate) fn set_app_icon(rgba: &[u8], width: i64, height: i64) -> Result<()> {
 }
 
 /// The X11 window of every open window, for the input time they share.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn x11_windows() -> Vec<u64> {
     all_windows()
         .into_iter()

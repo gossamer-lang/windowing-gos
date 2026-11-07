@@ -1,10 +1,10 @@
 //! Per-user ownership and acknowledged forwarding for Windows and macOS.
 //! The lock file is deliberately never unlinked: replacing its inode would
 //! permit a second owner while an old process still held the original lock.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 use super::Claim;
 use super::Request;
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub enum Claim {
     Primary(Listener),
     Forwarded,

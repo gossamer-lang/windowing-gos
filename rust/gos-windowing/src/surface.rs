@@ -242,6 +242,18 @@ impl Window {
                 window: self.id,
             });
         }
+        #[cfg(free_unix)]
+        if crate::wayland_shm::applies() {
+            let (width, height) = crate::wayland_shm::pixel_size(self);
+            return Ok(Frame {
+                pixels: vec![0u8; (width * 4 * height).max(0) as usize],
+                width,
+                height,
+                stride: width * 4,
+                format: crate::wayland_shm::format(self),
+                window: self.id,
+            });
+        }
         let surface = self.window_surface()?;
         Ok(Frame {
             pixels: vec![0u8; (surface.stride * surface.height) as usize],
@@ -275,6 +287,19 @@ impl Window {
                 }
             });
         }
+        #[cfg(free_unix)]
+        if crate::wayland_shm::applies() {
+            let (width, height) = crate::wayland_shm::pixel_size(self);
+            if (width, height) != (frame.width, frame.height) || frame.stride != width * 4 {
+                return Err(Error::new(format!(
+                    "the frame is {}x{} but the window is now {width}x{height}; take a new framebuffer after a resize",
+                    frame.width, frame.height
+                )));
+            }
+            return crate::wayland_shm::paint(self, &[], |pixels, _, _, _, _| {
+                pixels.copy_from_slice(&frame.pixels);
+            });
+        }
         let surface = self.window_surface()?;
         if surface.width != frame.width
             || surface.height != frame.height
@@ -305,6 +330,11 @@ impl Window {
             crate::macos::layer::release(self);
             return Ok(());
         }
+        #[cfg(free_unix)]
+        if crate::wayland_shm::applies() {
+            crate::wayland_shm::release(self);
+            return Ok(());
+        }
         // SAFETY: handle is live on the UI thread; SDL answers true when the
         // window has no surface.
         support::check(
@@ -325,6 +355,10 @@ impl Window {
         #[cfg(target_os = "macos")]
         if crate::macos::layer::applies() {
             return crate::macos::layer::paint(self, damage, paint);
+        }
+        #[cfg(free_unix)]
+        if crate::wayland_shm::applies() {
+            return crate::wayland_shm::paint(self, damage, paint);
         }
         let surface = self.window_surface()?;
         // SAFETY: the surface holds stride * height bytes until the next resize,
@@ -374,6 +408,17 @@ impl Window {
         if crate::macos::layer::applies() {
             let mut frame = self.framebuffer()?;
             if let Some(shown) = crate::macos::layer::capture(self)? {
+                frame.pixels = shown.pixels;
+                frame.width = shown.width;
+                frame.height = shown.height;
+                frame.stride = shown.stride;
+            }
+            return Ok(frame);
+        }
+        #[cfg(free_unix)]
+        if crate::wayland_shm::applies() {
+            let mut frame = self.framebuffer()?;
+            if let Some(shown) = crate::wayland_shm::capture(self) {
                 frame.pixels = shown.pixels;
                 frame.width = shown.width;
                 frame.height = shown.height;

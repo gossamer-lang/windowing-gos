@@ -259,7 +259,7 @@ fn qt5_weight(w: i64) -> i64 {
 }
 
 /// The fixed-width font the desktop names, where it names one: GNOME's and
-/// KDE's settings on Linux. Other platforms leave the choice to the
+/// KDE's settings on Linux and FreeBSD. Other platforms leave the choice to the
 /// application.
 pub fn monospace_font() -> Option<MonospaceFont> {
     prefs::monospace_font()
@@ -323,15 +323,15 @@ pub(crate) fn shutdown() {
 
 /// Whether the desktop says assistive technology, such as a screen reader,
 /// is on. From the first call on, the session watches the switch, and
-/// `Event::PreferencesChanged` says to ask again. Only Linux desktops have
+/// `Event::PreferencesChanged` says to ask again. Only Linux and FreeBSD desktops have
 /// such a switch; elsewhere a reader announces itself to the window.
 pub fn assistive_technology() -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     {
         prefs::watch();
         prefs::assistive_technology()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(free_unix))]
     {
         false
     }
@@ -339,7 +339,7 @@ pub fn assistive_technology() -> bool {
 
 // An sRGB channel from a component in 0..1; `None` outside it, which the
 // desktop portal uses for no accent.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(free_unix, target_os = "macos"))]
 pub(crate) fn channel(component: f64) -> Option<u8> {
     if !(0.0..=1.0).contains(&component) {
         return None;
@@ -358,7 +358,7 @@ pub(crate) fn changed() {
 // backends also carry where the portal's own appearance keys are unset.
 // A thread of its own reads the `SettingChanged` signals, so a change wakes
 // `App::wait` without the program running anything for it.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod prefs {
     use std::thread::JoinHandle;
 
@@ -714,7 +714,7 @@ mod prefs {
 // factor. SDL takes that scale from, in order, its scaling hint, the
 // `Xft.dpi` resource, the XSETTINGS window scale or `Xft/DPI`, and
 // `GDK_SCALE`; desktops fold their text factor into the two DPI values only.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod x11_scale {
     use std::collections::HashMap;
     use std::ffi::{CStr, c_char};
@@ -1127,7 +1127,7 @@ mod prefs {
     pub(super) fn stop() {}
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(free_unix, target_os = "windows", target_os = "macos")))]
 mod prefs {
     use super::Preferences;
 

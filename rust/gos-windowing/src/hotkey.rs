@@ -58,17 +58,17 @@ pub(crate) fn refuse(id: u32, reason: String) -> Result<()> {
 
 // The Wayland activation token the portal sent with the latest hotkey press,
 // until a window spends it on taking focus.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 static ACTIVATION_TOKEN: Mutex<String> = Mutex::new(String::new());
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn note_activation_token(token: String) {
     *ACTIVATION_TOKEN.lock() = token;
 }
 
 /// The Wayland activation token of the latest hotkey press, once; empty when
 /// none is waiting.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn take_activation_token() -> String {
     std::mem::take(&mut *ACTIVATION_TOKEN.lock())
 }
@@ -78,7 +78,7 @@ fn deliver(id: u32) {
     let _ = press(id);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn fail_later(id: u32, reason: String) {
     let _ = refuse(id, reason);
 }
@@ -151,7 +151,7 @@ pub(crate) fn shutdown() {
     platform::shutdown();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn on_x11_event(raw: *mut sdl3_sys::system::XEvent) -> bool {
     platform::x11::on_event(raw)
 }
@@ -162,7 +162,7 @@ pub(crate) fn on_windows_message(m: &windows_sys::Win32::UI::WindowsAndMessaging
 }
 
 // The X keysym and its XKB name for `key`, as X11 and the portal spell it.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(free_unix, test))]
 fn keysym(key: Key) -> Option<(u64, String)> {
     let named = |value: u64, name: &str| Some((value, name.to_string()));
     match key {
@@ -281,7 +281,7 @@ fn unsupported_key(key: Key) -> Error {
     Error::new(format!("{key:?} can't be a global shortcut"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod platform {
     use super::{Error, Key, Mods, Result};
 
@@ -1319,7 +1319,7 @@ mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(free_unix, target_os = "windows", target_os = "macos")))]
 mod platform {
     use crate::{Error, Key, Mods, Result};
 

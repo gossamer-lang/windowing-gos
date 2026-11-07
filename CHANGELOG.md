@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.10 - FreeBSD desktops, leaner Wayland windows
+
+- FreeBSD desktops take the X11, Wayland, and D-Bus paths Linux does: drag and drop, global shortcuts, desktop notifications, appearance preferences, focus by activation token, and the single-instance claim on the session bus work there, where each answered unavailable.
+- A window under the Wayland driver presents its software surface through shared-memory buffers the compositor reads in place, as X11 does, instead of through an SDL renderer: a program that paints in software no longer loads the GPU driver, Vulkan and LLVM, which took over 100 MB.
+
 ## 0.1.9 - Leaner macOS windows
 
 - A window on macOS keeps only the buffer it shows in memory: the buffers it painted earlier frames into go back to the system as soon as the window server stops reading them, so they no longer count toward the program's memory, and the next frame takes them back.

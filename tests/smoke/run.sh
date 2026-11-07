@@ -1,8 +1,12 @@
 #!/bin/sh
 # Runs the release smoke build on real video drivers without touching the
 # user's session: X11 on a private server (Xvfb, or Xephyr nested in the
-# current display) and Wayland on a headless Weston compositor.
+# current display) and Wayland on a headless Weston compositor, or headless
+# sway where no Weston is packaged.
 set -e
+# No session bus: with none named, the first D-Bus client would autolaunch one
+# that outlives the run and holds the captured output open.
+export DBUS_SESSION_BUS_ADDRESS=disabled:
 cd "$(dirname "$0")"
 GOS=${GOS:-gos}
 "$GOS" build --release . >/dev/null
@@ -48,8 +52,19 @@ if command -v weston >/dev/null 2>&1; then
     while [ ! -e "$runtime/gos-smoke" ]; do sleep 0.1; done
     out=$(env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=gos-smoke SDL_VIDEO_DRIVER=wayland "$binary" 2>&1) && code=0 || code=$?
     report wayland "$code" "$out"
+elif command -v sway >/dev/null 2>&1; then
+    # FreeBSD packages no Weston; sway's wlroots headless backend stands in.
+    runtime=$(mktemp -d /tmp/smoke-rt.XXXXXX)
+    config="$scratch/sway.config"
+    : >"$config"
+    XDG_RUNTIME_DIR="$runtime" WLR_BACKENDS=headless WLR_RENDERER=pixman \
+        WLR_LIBINPUT_NO_DEVICES=1 sway -c "$config" >/dev/null 2>&1 &
+    servers="$servers $!"
+    while [ ! -S "$runtime/wayland-1" ]; do sleep 0.1; done
+    out=$(env -u DISPLAY XDG_RUNTIME_DIR="$runtime" WAYLAND_DISPLAY=wayland-1 SDL_VIDEO_DRIVER=wayland "$binary" 2>&1) && code=0 || code=$?
+    report wayland "$code" "$out"
 else
-    echo "  FAIL  wayland: needs weston"
+    echo "  FAIL  wayland: needs weston or sway"
     status=1
 fi
 exit $status

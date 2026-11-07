@@ -82,9 +82,9 @@ impl App {
         }
         let finished = self.event_base + crate::event::DRAG_OFFSET;
         match crate::video_driver().as_str() {
-            #[cfg(target_os = "linux")]
+            #[cfg(free_unix)]
             "x11" => xdnd::start(window, items, operation, finished),
-            #[cfg(target_os = "linux")]
+            #[cfg(free_unix)]
             "wayland" => wayland::start(
                 window,
                 items,
@@ -104,22 +104,22 @@ impl App {
 /// Whether `App::start_drag` can drag data to other applications here.
 pub fn has_outbound_drag() -> bool {
     match crate::video_driver().as_str() {
-        "x11" => cfg!(target_os = "linux"),
-        #[cfg(target_os = "linux")]
+        "x11" => cfg!(free_unix),
+        #[cfg(free_unix)]
         "wayland" => wayland::available(),
         "windows" | "cocoa" => true,
         _ => false,
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn has_activation() -> bool {
     wayland::has_activation()
 }
 
 /// Binds what a drag source needs once the video driver is up.
 pub(crate) fn init() {
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     if crate::video_driver() == "wayland" {
         wayland::init();
     }
@@ -127,35 +127,35 @@ pub(crate) fn init() {
 
 /// The text the next local drop event carries.
 pub(crate) fn take_local_text() -> String {
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     return wayland::take_local_text();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(free_unix))]
     String::new()
 }
 
 /// Releases a finished drag as its `Event::DragFinished` is decoded.
 pub(crate) fn finished() {
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     wayland::reap();
 }
 
 /// Whether SDL should go on to handle the X event `raw`: false for the
 /// drag's own messages.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn on_x11_event(raw: *mut sdl3_sys::system::XEvent) -> bool {
     xdnd::on_event(raw)
 }
 
 /// Ends the drag sources when the session ends.
 pub(crate) fn shutdown() {
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     {
         xdnd::shutdown();
         wayland::shutdown();
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod xdnd {
     use std::ffi::{CString, c_int, c_long};
     use std::sync::OnceLock;
@@ -673,11 +673,11 @@ mod xdnd {
 }
 
 /// Applies a token forwarded by the desktop to SDL's existing Wayland surface.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn activate(window: &Window, token: &str) -> Result<()> {
     wayland::activate(window, token)
 }
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub(crate) fn activation_token(window: &Window) -> Result<String> {
     wayland::activation_token(window)
 }
@@ -690,7 +690,7 @@ pub(crate) fn activation_token(window: &Window) -> Result<String> {
 // SDL would have reported it. The library's objects live on an event queue a
 // thread of its own dispatches, so a target in another process gets the data
 // even while the main thread is busy.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod wayland {
     use std::collections::VecDeque;
     use std::io::Write;

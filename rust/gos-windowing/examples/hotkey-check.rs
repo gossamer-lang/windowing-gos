@@ -4,7 +4,7 @@
 //! go first.
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod keyboard {
     use std::ffi::c_int;
 
@@ -75,7 +75,7 @@ mod keyboard {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod check {
     use std::time::{Duration, Instant};
 
@@ -174,10 +174,10 @@ mod check {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 use check::run;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 fn run() -> Result<()> {
     println!("SKIP XTEST typing is for X11");
     Ok(())

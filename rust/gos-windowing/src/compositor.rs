@@ -52,6 +52,8 @@ impl Compositor {
         }
         #[cfg(target_os = "macos")]
         crate::macos::layer::release(&window);
+        #[cfg(free_unix)]
+        crate::wayland_shm::release(&window);
         let renderer = unsafe {
             SDL_CreateRenderer(
                 window.handle,

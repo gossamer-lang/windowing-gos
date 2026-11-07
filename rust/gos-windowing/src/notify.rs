@@ -1,4 +1,4 @@
-//! Desktop notifications: the session's notification server on Linux
+//! Desktop notifications: the session's notification server on Linux and FreeBSD
 //! (`org.freedesktop.Notifications`), `NSUserNotificationCenter` on macOS (for
 //! a program run from an application bundle), and a notification-area balloon
 //! on Windows, which Windows 10 and later show as a toast.
@@ -36,16 +36,16 @@ impl Default for Notification {
 
 impl App {
     /// Shows `notification` through the desktop's notification service.
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     pub fn notify(&self, notification: &Notification) -> Result<()> {
         send_linux(&app_name(), notification)
     }
 
-    /// Shows `notification` and calls `done` with the outcome. On Linux the
+    /// Shows `notification` and calls `done` with the outcome. On Linux and FreeBSD the
     /// server is asked from a thread of its own, since D-Bus may first start
     /// the server, so `done` runs on that thread; elsewhere it runs before
     /// this returns.
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     pub fn notify_then(
         &self,
         notification: Notification,
@@ -74,7 +74,7 @@ impl App {
     }
 
     /// Shows `notification` and calls `done` with the outcome before this returns.
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(free_unix))]
     pub fn notify_then(
         &self,
         notification: Notification,
@@ -104,7 +104,7 @@ impl App {
     }
 
     /// Notifications need a platform adapter this platform lacks.
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    #[cfg(not(any(free_unix, target_os = "macos", target_os = "windows")))]
     pub fn notify(&self, _notification: &Notification) -> Result<()> {
         Err(crate::Error::new(
             "desktop notifications are not available on this platform",
@@ -114,14 +114,10 @@ impl App {
 
 /// Whether `App::notify` has an adapter on this platform.
 pub fn has_notifications() -> bool {
-    cfg!(any(
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "windows"
-    ))
+    cfg!(any(free_unix, target_os = "macos", target_os = "windows"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn app_name() -> String {
     use sdl3_sys::init::{SDL_GetAppMetadataProperty, SDL_PROP_APP_METADATA_NAME_STRING};
     // SAFETY: SDL answers a string it owns, or null.
@@ -130,7 +126,7 @@ fn app_name() -> String {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 fn send_linux(name: &str, notification: &Notification) -> Result<()> {
     use std::collections::HashMap;
 

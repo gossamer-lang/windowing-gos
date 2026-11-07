@@ -13,7 +13,7 @@ fn cycle() -> Result<(), errors::Error> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn main() -> Result<(), errors::Error> {
     cycle()?
     let descriptors = fs::read_dir("/proc/self/fd")?.len()
@@ -25,5 +25,5 @@ fn main() -> Result<(), errors::Error> {
     println(f"{cycles + 1} sessions closed; descriptors stable at {descriptors}")
     Ok(())
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn main() -> Result<(), errors::Error> { cycle() }

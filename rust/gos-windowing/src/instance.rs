@@ -1,9 +1,9 @@
-//! One running instance per application. Linux serves the session-bus name
+//! One running instance per application. Linux and FreeBSD serve the session-bus name
 //! as org.freedesktop.Application. Windows and macOS use a per-user ownership
 //! lock and an authenticated loopback endpoint; macOS also delivers native
 //! LaunchServices file-open events through Event::OpenRequested.
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 use crate::Result;
 
 /// What a later launch asks the running instance to do.
@@ -42,7 +42,7 @@ impl Activation {
         }
         Ok(())
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     fn environment() -> crate::Result<Self> {
         let context = Self {
             token: std::env::var("XDG_ACTIVATION_TOKEN").unwrap_or_default(),
@@ -80,8 +80,8 @@ impl Request {
         Ok(())
     }
 
-    // The bytes the Linux listener charges a queued request.
-    #[cfg(target_os = "linux")]
+    // The bytes the session-bus listener charges a queued request.
+    #[cfg(free_unix)]
     fn cost(&self) -> usize {
         let texts: Vec<&String> = match self {
             Self::Activate => Vec::new(),
@@ -231,7 +231,7 @@ pub(crate) fn native_path(path: &str) -> String {
     path.to_string()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 mod linux {
     use std::collections::HashMap;
     use std::os::fd::{AsRawFd, OwnedFd};
@@ -587,22 +587,22 @@ mod linux {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub use linux::{Listener, object_path};
 
 /// Claims `app_id` for this process, or hands `request` to the running instance.
-#[cfg(target_os = "linux")]
+#[cfg(free_unix)]
 pub fn claim(app_id: &str, request: Request) -> Result<Claim> {
     linux::claim(app_id, request)
 }
 
-#[cfg(any(not(target_os = "linux"), test))]
+#[cfg(any(not(free_unix), test))]
 #[path = "instance/portable.rs"]
 mod portable;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 pub use portable::{Listener, claim};
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(free_unix))]
 impl Listener {
     pub fn take_forwarded(&self) -> Vec<ForwardedRequest> {
         self.take_requests()
@@ -676,7 +676,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(free_unix)]
     #[test]
     fn an_application_id_names_its_object_path() {
         assert_eq!(
@@ -686,7 +686,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, free_unix))]
 mod bus_process_tests {
     use super::*;
     use std::io::BufRead;
