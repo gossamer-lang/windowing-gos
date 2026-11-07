@@ -63,7 +63,10 @@ idle_case() {
     before=$(wakeups "$pid")
     sleep "$window"
     after=$(wakeups "$pid")
-    kill -INT "$pid"
+    # A coprocess of a non-interactive bash 5.3 starts with SIGINT ignored,
+    # and SDL then leaves it alone; SIGTERM reaches SDL's quit event on every
+    # bash.
+    kill -TERM "$pid"
     wait "$pid"
     last_rss=$((rss / 1024))
     last_threads=$threads
