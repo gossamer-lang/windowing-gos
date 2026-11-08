@@ -1,6 +1,6 @@
 [package]
 name = "gos-windowing"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2024"
 publish = false
 
@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 # SDL 3.4.20 with a fix for windows that wait forever for their first
 # configure under libdecor, until SDL releases it.
-sdl3-sys = { git = "https://github.com/danpozmanter/sdl3-sys-rs", rev = "05a18e2fe2596bfc497d7e0625f8eaa5d06db706", default-features = false, features = [
+sdl3-sys = { git = "https://github.com/danpozmanter/sdl3-sys-rs", rev = "0f4f3f54890d348e1c36369444678bacaa35d923", default-features = false, features = [
     "build-from-source-static",
     "no-sdl-audio",
     "no-sdl-gpu",

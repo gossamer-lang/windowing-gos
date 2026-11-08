@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.12 - Wakes that reach a waiting loop
+
+- Builds SDL 3.4.20 with a fix for a wake from another thread that could be lost while the loop was about to wait: an event pushed just before the wait began sent no wakeup, so the loop slept until its timeout, or until the next input when it had none.
+
 ## 0.1.11 - Wayland windows that open reliably
 
 - Builds SDL 3.4.20 with a fix for a window under libdecor (GNOME and other desktops that draw no title bars) that could wait forever for its first configure while another thread read the display; with nothing else drawing, opening a second window could hang the program.
