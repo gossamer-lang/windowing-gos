@@ -11,7 +11,10 @@
 # The budgets compare with the C programs on the same machine, so they hold
 # on any hardware: the idle software window at most 32 MiB, 2 threads and
 # one wakeup a second; the GL window within 25% (plus 8 MiB) of C's memory;
-# native events at most 4 times C's cost and JIT events at most 20 times.
+# native polling at most 8 times C's and JIT events at most 20 times.
+# With MEASURE_BASELINE naming a release, native events cost no more than in
+# that release, built here and run in turn with this one on the same machine;
+# the program sends the events it receives, so this covers both directions.
 # Each gated throughput is the fastest of several runs taken in turn with C's.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,7 +37,13 @@ prefix=$(cargo build --release --quiet --message-format=json \
 cflags=$(PKG_CONFIG_PATH="$prefix/lib/pkgconfig" pkg-config --cflags sdl3)
 libs=$(PKG_CONFIG_PATH="$prefix/lib/pkgconfig" pkg-config --static --libs sdl3)
 out=$(mktemp -d)
-trap 'rm -rf "$out"' EXIT
+trap 'git worktree remove --force "$out/baseline" 2>/dev/null || true; rm -rf "$out"' EXIT
+base_bin=
+if [ -n "${MEASURE_BASELINE:-}" ]; then
+    git worktree add -q --detach "$out/baseline" "$MEASURE_BASELINE"
+    (cd "$out/baseline/tests/measure" && "$GOS" build --release . > /dev/null)
+    base_bin=$out/baseline/tests/measure/target/release/windowing-measure
+fi
 cc -O2 $cflags c/idle.c -o "$out/idle" $libs
 cc -O2 $cflags c/throughput.c -o "$out/throughput" $libs
 
@@ -99,6 +108,8 @@ echo
 echo "| Tier | ns/event |"
 echo "|---|---|"
 per_event() { "$@" | awk '{print $NF}'; }
+# Field `$1` of a throughput line, the word after its name.
+field() { awk -v name="$1" '{ for (i = 1; i < NF; i++) if ($i == name) print $(i + 1) }'; }
 export SDL_VIDEO_DRIVER=offscreen
 # A busy machine slows a run and never speeds one up, so a program's fastest
 # run is its cost; taking the runs in turn gives each the same machine.
@@ -107,17 +118,30 @@ fastest() {
     if [ -z "$1" ] || [ "$2" -lt "$1" ]; then echo "$2"; else echo "$1"; fi
 }
 vm=$(GOS_RUN_ENGINE=vm GOS_JIT=0 per_event "$GOS" run . throughput $events)
-jit= native= c=
+jit= native= native_poll= c= c_poll= base=
 for _ in $(seq "$rounds"); do
     jit=$(fastest "$jit" "$(GOS_RUN_ENGINE=vm per_event "$GOS" run . throughput $events)")
-    native=$(fastest "$native" "$(per_event "$gos_bin" throughput $events)")
-    c=$(fastest "$c" "$(per_event "$out/throughput" $events)")
+    line=$("$gos_bin" throughput $events)
+    native=$(fastest "$native" "$(awk '{print $NF}' <<< "$line")")
+    native_poll=$(fastest "$native_poll" "$(field poll <<< "$line")")
+    line=$("$out/throughput" $events)
+    c=$(fastest "$c" "$(awk '{print $NF}' <<< "$line")")
+    c_poll=$(fastest "$c_poll" "$(field poll <<< "$line")")
+    if [ -n "$base_bin" ]; then
+        base=$(fastest "$base" "$(per_event "$base_bin" throughput $events)")
+    fi
 done
 echo "| bytecode VM | $vm |"
 echo "| JIT | $jit |"
 echo "| native (release) | $native |"
 echo "| C | $c |"
-budget "native ns/event against C" "$native <= $c * 4"
+echo "| native polling | $native_poll |"
+echo "| C polling | $c_poll |"
+budget "native polling against C" "$native_poll <= $c_poll * 8"
+if [ -n "$base_bin" ]; then
+    echo "| native (release $MEASURE_BASELINE) | $base |"
+    budget "native ns/event against $MEASURE_BASELINE" "$native <= $base * 1.05"
+fi
 budget "JIT ns/event against C" "$jit <= $c * 20"
 if [ "$failures" -gt 0 ]; then
     exit 1

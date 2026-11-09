@@ -53,6 +53,7 @@ fn throughput(count: i64) -> Result<(), errors::Error> {
     let mut drained = 0
     let mut checksum = 0
     let start = time::Instant::now()
+    let mut polling = 0
     while drained < count {
         let batch = BATCH.min(count - drained)
         for i in 0..batch {
@@ -64,6 +65,7 @@ fn throughput(count: i64) -> Result<(), errors::Error> {
                 repeat: i % 2 == 0
             })?
         }
+        let poll_start = time::Instant::now()
         loop {
             match app.poll() {
                 Some(Event::KeyDown { repeat, .. }) => {
@@ -76,9 +78,10 @@ fn throughput(count: i64) -> Result<(), errors::Error> {
                 None => break
             }
         }
+        polling += poll_start.elapsed().as_nanos()
     }
     let elapsed = start.elapsed().as_nanos()
-    println(f"events {drained} repeats {checksum} ns/event {elapsed / drained}")
+    println(f"events {drained} repeats {checksum} poll {polling / drained} ns/event {elapsed / drained}")
     Ok(())
 }
 

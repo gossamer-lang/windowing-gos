@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
     SDL_WindowID id = SDL_GetWindowID(win);
     long drained = 0, repeats = 0;
     Uint64 start = SDL_GetTicksNS();
+    Uint64 polling = 0;
     while (drained < count) {
         long batch = count - drained < BATCH ? count - drained : BATCH;
         for (long i = 0; i < batch; i++) {
@@ -38,15 +39,18 @@ int main(int argc, char **argv) {
             }
         }
         SDL_Event e;
+        Uint64 poll_start = SDL_GetTicksNS();
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_EVENT_KEY_DOWN) {
                 drained++;
                 repeats += e.key.repeat;
             }
         }
+        polling += SDL_GetTicksNS() - poll_start;
     }
     Uint64 elapsed = SDL_GetTicksNS() - start;
-    printf("events %ld repeats %ld ns/event %llu\n", drained, repeats,
+    printf("events %ld repeats %ld poll %llu ns/event %llu\n", drained, repeats,
+           (unsigned long long)(polling / (Uint64)drained),
            (unsigned long long)(elapsed / (Uint64)drained));
     SDL_DestroyWindow(win);
     SDL_Quit();

@@ -360,6 +360,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The release before this commit, built to compare with.
+          fetch-depth: 0
+          fetch-tags: true
       - name: Install SDL's build dependencies and a display server
         run: |
           sudo apt-get update
@@ -374,4 +378,6 @@ jobs:
       - name: Measure against the budgets
         env:
           SDL_VIDEO_DRIVER: x11
-        run: xvfb-run -a tests/measure/measure.sh --gate
+        run: |
+          MEASURE_BASELINE=$(git describe --tags --abbrev=0 HEAD^) \
+            xvfb-run -a tests/measure/measure.sh --gate
