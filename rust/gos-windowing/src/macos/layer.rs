@@ -38,13 +38,14 @@ const BGRA: i32 = i32::from_be_bytes(*b"BGRA");
 // still be reading for the frame before, and one to paint. A third is made
 // only while the other two are both in use.
 const POOL: usize = 3;
+// How long a window paints nothing before it keeps only the buffer it shows.
+const QUIET: Duration = Duration::from_secs(2);
 
 struct Buffer {
     surface: CFRetained<IOSurfaceRef>,
     // The frame the buffer holds; a new buffer holds none.
     frame: Option<u64>,
-    // A volatile buffer's pages are the system's to reclaim, and while they
-    // stay volatile they are not part of the process's memory footprint.
+    // A volatile buffer's pages are the system's to reclaim.
     volatile: bool,
 }
 
@@ -65,6 +66,7 @@ struct LayerSurface {
     // When to look again at a buffer the window server still reads, and the
     // wait that led there.
     recheck: Option<(Instant, Duration)>,
+    last_paint: Instant,
 }
 
 thread_local! {
@@ -212,6 +214,7 @@ impl LayerSurface {
             history: VecDeque::new(),
             refresh: refresh(window),
             recheck: None,
+            last_paint: Instant::now(),
         })
     }
 
@@ -241,11 +244,30 @@ impl LayerSurface {
         }
         if !reading {
             self.recheck = None;
-            return None;
+            return self.release_spares(now);
         }
         let wait = self.recheck.map_or(self.refresh, |(_, wait)| wait * 2);
         self.recheck = Some((now + wait, wait));
         Some(wait)
+    }
+
+    // Frees every buffer but the shown one once the window has gone quiet,
+    // since a volatile surface still counts toward the process's footprint;
+    // the next paint makes a buffer and copies the shown frame into it.
+    // Answers how long until that is due.
+    fn release_spares(&mut self, now: Instant) -> Option<Duration> {
+        let front = self.front?;
+        if self.buffers.len() < 2 {
+            return None;
+        }
+        let quiet = now.saturating_duration_since(self.last_paint);
+        if quiet < QUIET {
+            return Some(QUIET - quiet);
+        }
+        let shown = self.buffers.swap_remove(front);
+        self.buffers = vec![shown];
+        self.front = Some(0);
+        None
     }
 
     // Takes buffer `index` back from the system before it is painted; a
@@ -318,6 +340,7 @@ impl LayerSurface {
         damage: &[Rect],
         paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
     ) -> Result<()> {
+        self.last_paint = Instant::now();
         let back = self.target()?;
         self.reclaim(back);
         {
