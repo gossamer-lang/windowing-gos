@@ -162,11 +162,6 @@ pub fn init(name: &str, options: &InitOptions) -> Result<App> {
     system::PREFERENCES_EVENT_TYPE.store(base + event::PREFERENCES_OFFSET, Ordering::Release);
     hotkey::HOTKEY_EVENT_TYPE.store(base + event::HOTKEY_OFFSET, Ordering::Release);
     access::set_wake_event(base + event::WAKE_OFFSET);
-    if let Err(e) = hooks::add_scoped_redraw() {
-        // SAFETY: undoes the init above.
-        unsafe { SDL_Quit() };
-        return Err(e);
-    }
     Ok(App {
         event_base: base,
         pending_wake: Arc::new(AtomicBool::new(false)),

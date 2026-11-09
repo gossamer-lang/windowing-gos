@@ -157,17 +157,30 @@ pub(crate) fn redrawing<R>(
     redraw_type: u32,
     pump: impl FnOnce() -> R,
 ) -> R {
-    struct Restore(Option<(NonNull<ScopedRedraw>, u32)>);
+    struct Restore {
+        outer: Option<(NonNull<ScopedRedraw>, u32)>,
+        watching: bool,
+    }
     impl Drop for Restore {
         fn drop(&mut self) {
-            SCOPED.set(self.0);
+            SCOPED.set(self.outer);
+            if self.watching {
+                // SAFETY: the watch takes no context, and is the one added below.
+                unsafe { SDL_RemoveEventWatch(Some(scoped_redraw_entry), std::ptr::null_mut()) };
+            }
         }
     }
     let borrowed: NonNull<dyn FnMut(Window) + '_> = NonNull::from(redraw);
     // SAFETY: only the lifetime changes. The slot holds the pointer until
     // `Restore` drops at the end of this call, while `redraw` stays borrowed.
     let erased: NonNull<ScopedRedraw> = unsafe { std::mem::transmute(borrowed) };
-    let _restore = Restore(SCOPED.replace(Some((erased, redraw_type))));
+    let outer = SCOPED.replace(Some((erased, redraw_type)));
+    // SDL runs every watch on every event, so this one is installed only for
+    // the scopes that want it. Without it, the pump runs with no live redraw.
+    // SAFETY: the watch takes no context.
+    let watching = outer.is_none()
+        && unsafe { SDL_AddEventWatch(Some(scoped_redraw_entry), std::ptr::null_mut()) };
+    let _restore = Restore { outer, watching };
     pump()
 }
 
@@ -195,15 +208,6 @@ unsafe extern "C" fn scoped_redraw_entry(_data: *mut c_void, event: *mut SDL_Eve
         unsafe { (*redraw.as_ptr())(win) }
     });
     true
-}
-
-/// Installs the watch that serves `redrawing`; quitting SDL removes it.
-pub(crate) fn add_scoped_redraw() -> Result<()> {
-    support::check(
-        // SAFETY: the watch takes no context.
-        unsafe { SDL_AddEventWatch(Some(scoped_redraw_entry), std::ptr::null_mut()) },
-        "installing the live-resize redraw",
-    )
 }
 
 // SDL runs event watches for every event, on whatever thread queued it. The

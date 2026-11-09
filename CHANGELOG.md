@@ -4,6 +4,7 @@
 
 - macOS: a window that has painted nothing for 2 seconds frees its spare display buffers instead of only marking them reclaimable, and the next paint makes one again.
 - macOS: programs no longer load CloudKit, CoreData, CoreImage, CoreLocation and similar system frameworks the library does not use.
+- A program that does not use `redrawing` no longer pays for its event watch on every event: the watch is installed only while a `redrawing` scope runs.
 
 ## 0.1.12 - Wakes that reach a waiting loop
 
