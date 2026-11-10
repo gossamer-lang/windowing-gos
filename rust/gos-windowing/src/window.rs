@@ -1063,6 +1063,8 @@ pub(crate) fn create(options: &WindowOptions, redraw_type: u32) -> Result<Window
         id: WindowId(id.0),
         redraw_type,
     };
+    #[cfg(target_os = "macos")]
+    crate::macos::forget_on_quit(window.pointer_property(SDL_PROP_WINDOW_COCOA_WINDOW_POINTER));
     crate::access::attach(&window);
     Ok(window)
 }

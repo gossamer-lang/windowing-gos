@@ -319,6 +319,11 @@ jobs:
     name: test, parity, and real drivers (FreeBSD)
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      # Gossamer builds for FreeBSD from 0.77.0 on. A named release keeps the
+      # installer from asking GitHub's API for the latest one, which answers
+      # anonymous calls from shared runners with 403 once they hit its limit.
+      GOSSAMER_VERSION: v0.78.1
     steps:
       - uses: actions/checkout@v6
       - name: Test in FreeBSD
@@ -327,7 +332,7 @@ jobs:
           usesh: true
           mem: 12288
           copyback: false
-          envs: GOSSAMER_REPO SDL_VIDEO_DRIVER
+          envs: GOSSAMER_REPO GOSSAMER_VERSION SDL_VIDEO_DRIVER
           prepare: |
             pkg install -y bash curl git cmake ninja pkgconf python3 llvm22 dbus \
               xorg-vfbserver sway libX11 libXext libXrandr libXcursor libXi libXfixes \

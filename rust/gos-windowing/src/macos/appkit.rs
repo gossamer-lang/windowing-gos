@@ -62,6 +62,16 @@ pub(crate) fn configure_tabs(
     Ok(())
 }
 
+/// Keeps AppKit from saving the window's state for the next launch. SDL
+/// tells AppKit to restore nothing, so each save would be work for nothing,
+/// done again whenever the window moves, resizes or changes.
+pub(crate) fn forget_on_quit(ns_window: *mut c_void) {
+    // SAFETY: SDL's live window.
+    if let Some(w) = unsafe { window(ns_window) } {
+        w.setRestorable(false);
+    }
+}
+
 /// Lets the window join every Space, or keeps it in its own.
 pub(crate) fn set_all_spaces(ns_window: *mut c_void, on: bool) -> Result<()> {
     // SAFETY: SDL's live window.

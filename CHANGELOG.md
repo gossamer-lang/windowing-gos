@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14 - Windows macOS does not save
+
+- macOS: windows are not restorable, so AppKit no longer encodes and writes a window's state for the next launch, which SDL tells it not to restore, each time the window moves, resizes or changes.
+
 ## 0.1.13 - Leaner macOS windows
 
 - macOS: a window that has painted nothing for 2 seconds frees its spare display buffers instead of only marking them reclaimable, and the next paint makes one again.

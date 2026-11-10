@@ -1,6 +1,6 @@
 [package]
 name = "gos-windowing"
-version = "0.1.13"
+version = "0.1.14"
 edition = "2024"
 publish = false
 
@@ -46,7 +46,7 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSData", "NSURL", "NSNotification", "NSProcessInfo", "NSBundle", "NSGeometry", "NSObject", "NSUserNotification", "NSError", "block2"] }
 # The crates' default features link CloudKit, CoreData, CoreLocation and the
 # like into every program; only what is named here is loaded.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSCell", "NSWindowTabGroup", "NSWindow", "NSView", "NSResponder", "NSMenu", "NSMenuItem", "NSAppearance", "NSColor", "NSColorSpace", "NSFont", "NSWorkspace", "NSEvent", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSPasteboard", "NSPasteboardItem", "NSImage", "NSGraphicsContext", "NSGraphics", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSAccessibilityConstants", "objc2-core-foundation", "objc2-quartz-core"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSCell", "NSWindowTabGroup", "NSWindow", "NSWindowRestoration", "NSView", "NSResponder", "NSMenu", "NSMenuItem", "NSAppearance", "NSColor", "NSColorSpace", "NSFont", "NSWorkspace", "NSEvent", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSPasteboard", "NSPasteboardItem", "NSImage", "NSGraphicsContext", "NSGraphics", "NSAccessibility", "NSAccessibilityProtocols", "NSAccessibilityElement", "NSAccessibilityConstants", "objc2-core-foundation", "objc2-quartz-core"] }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFBase", "CFCGTypes", "CFDictionary", "CFNumber", "CFString"] }
 objc2-quartz-core = { version = "0.3", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation"] }
 objc2-io-surface = { version = "0.3", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2-core-foundation"] }
