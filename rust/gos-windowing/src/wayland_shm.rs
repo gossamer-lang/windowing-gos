@@ -245,8 +245,8 @@ pub(crate) fn format(window: &Window) -> PixelFormat {
 }
 
 /// Paints into the buffer the window shows next, which first receives what
-/// the shown frame changed, then attaches it. `damage` empty repaints every
-/// pixel.
+/// the shown frame changed outside `damage`, then attaches it. `paint` must
+/// write every pixel of `damage`; `damage` empty repaints every pixel.
 pub(crate) fn paint(
     window: &Window,
     damage: &[Rect],
@@ -391,28 +391,6 @@ impl ShmSurface {
             .ok_or_else(|| Error::new("the window has no buffer to paint"))
     }
 
-    // What buffer `target` lacks of the shown frame: the rectangles every
-    // later frame changed, or all of it when the history no longer reaches
-    // back to the frame it holds.
-    fn missing(&self, target: usize) -> Vec<Rect> {
-        let whole = whole(self.width, self.height);
-        let Some(held) = self.buffers[target].frame else {
-            return vec![whole];
-        };
-        if self
-            .history
-            .front()
-            .is_none_or(|(first, _)| *first > held + 1)
-        {
-            return vec![whole];
-        }
-        self.history
-            .iter()
-            .filter(|(frame, _)| *frame > held)
-            .flat_map(|(_, rects)| rects.iter().copied())
-            .collect()
-    }
-
     fn paint(
         &mut self,
         session: &Session,
@@ -422,7 +400,12 @@ impl ShmSurface {
         let back = self.target(session)?;
         let stride = self.width * 4;
         if let Some(front) = self.front.filter(|&front| front != back) {
-            let missing = self.missing(back);
+            let missing = crate::catch_up::missing(
+                &self.history,
+                self.buffers[back].frame,
+                whole(self.width, self.height),
+                damage,
+            );
             let (from, to) = pair(&mut self.buffers, front, back);
             let (source, target) = (from.pixels.bytes(), to.pixels.bytes_mut());
             for r in missing {

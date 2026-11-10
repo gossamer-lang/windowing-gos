@@ -12,6 +12,8 @@ mod axmac;
 #[cfg(free_unix)]
 pub mod bus;
 pub mod capabilities;
+#[cfg(any(target_os = "macos", free_unix))]
+mod catch_up;
 pub mod clipboard;
 pub mod compositor;
 pub mod cursor;

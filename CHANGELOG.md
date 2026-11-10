@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.15 - Fewer copies per frame, buffers back sooner
+
+- A frame copies from the frame before only what it does not repaint itself, and copies each pixel once: a terminal that scrolls repaints its whole screen, which macOS and Wayland windows used to copy in from the last frame or two first.
+- macOS: a window that stops painting keeps only the buffer it shows much sooner, so a blinking caret no longer holds the spare buffers between blinks.
 ## 0.1.14 - Windows macOS does not save
 
 - macOS: windows are not restorable, so AppKit no longer encodes and writes a window's state for the next launch, which SDL tells it not to restore, each time the window moves, resizes or changes.

@@ -39,7 +39,9 @@ const BGRA: i32 = i32::from_be_bytes(*b"BGRA");
 // only while the other two are both in use.
 const POOL: usize = 3;
 // How long a window paints nothing before it keeps only the buffer it shows.
-const QUIET: Duration = Duration::from_secs(2);
+// Shorter than half a caret blink, so a blinking caret, which changes a cell
+// at a time, holds one buffer between its paints rather than every spare.
+const QUIET: Duration = Duration::from_millis(250);
 
 struct Buffer {
     surface: CFRetained<IOSurfaceRef>,
@@ -89,7 +91,8 @@ pub(crate) fn pixel_size(window: &Window) -> (i64, i64) {
 }
 
 /// Paints into the buffer the layer shows next, which first receives what
-/// the shown frame changed, then shows it. `damage` empty repaints every pixel.
+/// the shown frame changed outside `damage`, then shows it. `paint` must
+/// write every pixel of `damage`; `damage` empty repaints every pixel.
 pub(crate) fn paint(
     window: &Window,
     damage: &[Rect],
@@ -307,33 +310,6 @@ impl LayerSurface {
             .ok_or_else(|| Error::new("the layer has no buffer to paint"))
     }
 
-    // What buffer `target` lacks of the shown frame: the rectangles every
-    // later frame changed, or all of it when the history no longer reaches
-    // back to the frame it holds.
-    fn missing(&self, target: usize) -> Vec<Rect> {
-        let whole = Rect {
-            x: 0,
-            y: 0,
-            width: self.width,
-            height: self.height,
-        };
-        let Some(held) = self.buffers[target].frame else {
-            return vec![whole];
-        };
-        if self
-            .history
-            .front()
-            .is_none_or(|(first, _)| *first > held + 1)
-        {
-            return vec![whole];
-        }
-        self.history
-            .iter()
-            .filter(|(frame, _)| *frame > held)
-            .flat_map(|(_, rects)| rects.iter().copied())
-            .collect()
-    }
-
     fn paint(
         &mut self,
         window: &Window,
@@ -349,7 +325,14 @@ impl LayerSurface {
             if let Some(front) = self.front {
                 let source =
                     Locked::new(&self.buffers[front].surface, IOSurfaceLockOptions::ReadOnly)?;
-                for r in self.missing(back) {
+                let whole = Rect {
+                    x: 0,
+                    y: 0,
+                    width: self.width,
+                    height: self.height,
+                };
+                let held = self.buffers[back].frame;
+                for r in crate::catch_up::missing(&self.history, held, whole, damage) {
                     for row in r.y..r.y + r.height {
                         target
                             .row_mut(row, r.x, r.width)
