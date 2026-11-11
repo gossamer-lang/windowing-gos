@@ -566,9 +566,22 @@ fn release(window: u64, id: u64) {
     }
 }
 
-/// Whether VoiceOver is running.
+/// Whether VoiceOver is running. The answer is cached for a second because
+/// asking reads the user's preferences, and the engine asks every frame.
 pub(crate) fn voice_over_running() -> bool {
-    NSWorkspace::sharedWorkspace().isVoiceOverEnabled()
+    thread_local! {
+        static ASKED: std::cell::Cell<Option<(std::time::Instant, bool)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    let now = std::time::Instant::now();
+    if let Some((at, running)) = ASKED.get()
+        && now.duration_since(at) < std::time::Duration::from_secs(1)
+    {
+        return running;
+    }
+    let running = NSWorkspace::sharedWorkspace().isVoiceOverEnabled();
+    ASKED.set(Some((now, running)));
+    running
 }
 
 fn post(object: &AnyObject, notification: &NSString) {

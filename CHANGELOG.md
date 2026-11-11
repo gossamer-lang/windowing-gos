@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.16 - Scrolling without copying on macOS
+
+- macOS: `Window::paint_surface_rings` shows a ring of rows, such as a terminal's scrolling text, in layers of its own below the window's surface. Scrolling changes which rows the layers show instead of copying pixels, and each frame copies only the rows that changed. `Window::shows_rings` says whether a window can do this; elsewhere `paint_surface_rings` works like `paint_surface`.
+- macOS: a frame paints into the most recent buffer the system is not showing, and a window remembers what its last 8 frames changed, so a buffer the system held for a few frames is brought up to date by copying only those areas instead of the whole window.
+- macOS: whether VoiceOver is running is checked at most once a second instead of on every frame.
+
 ## 0.1.15 - Fewer copies per frame, buffers back sooner
 
 - A frame copies from the frame before only what it does not repaint itself, and copies each pixel once: a terminal that scrolls repaints its whole screen, which macOS and Wayland windows used to copy in from the last frame or two first.

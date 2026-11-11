@@ -19,7 +19,7 @@ use objc2_io_surface::{
     IOSurfaceLockOptions, IOSurfacePurgeabilityState, IOSurfaceRef, kIOSurfaceBytesPerElement,
     kIOSurfaceBytesPerRow, kIOSurfaceHeight, kIOSurfacePixelFormat, kIOSurfaceWidth,
 };
-use objc2_quartz_core::{CALayer, CATransaction, kCAGravityTopLeft};
+use objc2_quartz_core::{CALayer, CATransaction, kCAFilterNearest, kCAGravityTopLeft};
 use sdl3_sys::properties::SDL_GetPointerProperty;
 use sdl3_sys::video::{
     SDL_GetWindowProperties, SDL_GetWindowSize, SDL_GetWindowSizeInPixels,
@@ -27,7 +27,7 @@ use sdl3_sys::video::{
 };
 
 use crate::display::Rect;
-use crate::surface::PixelFormat;
+use crate::surface::{PixelFormat, Ring};
 use crate::window::Window;
 use crate::{Error, Result};
 
@@ -38,6 +38,9 @@ const BGRA: i32 = i32::from_be_bytes(*b"BGRA");
 // still be reading for the frame before, and one to paint. A third is made
 // only while the other two are both in use.
 const POOL: usize = 3;
+// How many recent frames' damage a window keeps. A buffer that is a few
+// frames old is brought up to date by copying just those areas.
+const HISTORY: usize = 8;
 // How long a window paints nothing before it keeps only the buffer it shows.
 // Shorter than half a caret blink, so a blinking caret, which changes a cell
 // at a time, holds one buffer between its paints rather than every spare.
@@ -69,6 +72,247 @@ struct LayerSurface {
     // wait that led there.
     recheck: Option<(Instant, Duration)>,
     last_paint: Instant,
+    // Rings shown below the surface. The surface is transparent over them.
+    rings: Vec<RingLayer>,
+}
+
+// How many recent versions of a ring's content are kept, with the rows each
+// one changed. An older buffer is brought up to date by copying those rows.
+const RING_HISTORY: usize = 8;
+
+// A ring of rows shown as two layers below the window's surface. The upper
+// layer shows stored rows `shift..`, the lower one rows `..shift`. Scrolling
+// changes which part of the buffer each layer shows; no pixels move.
+struct RingLayer {
+    key: u64,
+    width: i64,
+    height: i64,
+    upper: Retained<CALayer>,
+    lower: Retained<CALayer>,
+    buffers: Vec<RingBuffer>,
+    front: Option<usize>,
+    // Recent content versions: (id, previous id, rows changed), with `None`
+    // when the changed rows are unknown.
+    history: VecDeque<(u64, u64, Option<Vec<Rect>>)>,
+    // The content id, shift and rectangle the layers currently show.
+    shown: Option<(u64, i64, Rect)>,
+}
+
+struct RingBuffer {
+    surface: CFRetained<IOSurfaceRef>,
+    // The content id this buffer holds, or `None` for a new buffer.
+    content: Option<u64>,
+}
+
+impl Drop for RingLayer {
+    fn drop(&mut self) {
+        self.upper.removeFromSuperlayer();
+        self.lower.removeFromSuperlayer();
+    }
+}
+
+impl RingLayer {
+    fn new(key: u64, width: i64, height: i64, host: &CALayer, above: &CALayer) -> Self {
+        let band = || {
+            let layer = CALayer::new();
+            layer.setOpaque(true);
+            // The ring is shown at its own size, one stored pixel per window
+            // pixel, so turn off filtering to keep it sharp.
+            // SAFETY: the filter is a constant Core Animation defines.
+            unsafe {
+                layer.setMagnificationFilter(kCAFilterNearest);
+                layer.setMinificationFilter(kCAFilterNearest);
+            }
+            layer.setHidden(true);
+            host.insertSublayer_below(&layer, Some(above));
+            layer
+        };
+        Self {
+            key,
+            width,
+            height,
+            upper: band(),
+            lower: band(),
+            buffers: Vec::new(),
+            front: None,
+            history: VecDeque::new(),
+            shown: None,
+        }
+    }
+
+    // The rows that changed between content `held` and content `now`, or
+    // `None` if the history does not reach back that far.
+    fn missing(&self, held: Option<u64>, now: u64) -> Option<Vec<Rect>> {
+        let held = held?;
+        let mut written = Vec::new();
+        let mut at = now;
+        for _ in 0..self.history.len() + 1 {
+            if at == held {
+                return Some(written);
+            }
+            let (_, previous, rows) = self.history.iter().find(|(id, _, _)| *id == at)?;
+            written.extend_from_slice(rows.as_deref()?);
+            at = *previous;
+        }
+        None
+    }
+
+    // Picks a buffer to write. Prefer a buffer the window server is not
+    // reading, and among those the newest, since it has the fewest rows to
+    // copy. Otherwise make a new one if the pool has room, or reuse the
+    // oldest.
+    fn target(&mut self) -> Result<usize> {
+        let front = self.front;
+        if let Some(i) = (0..self.buffers.len())
+            .filter(|&i| Some(i) != front && !self.buffers[i].surface.is_in_use())
+            .max_by_key(|&i| self.buffers[i].content)
+        {
+            return Ok(i);
+        }
+        if self.buffers.len() < POOL {
+            let made = buffer(self.width, self.height)?;
+            self.buffers.push(RingBuffer {
+                surface: made.surface,
+                content: None,
+            });
+            return Ok(self.buffers.len() - 1);
+        }
+        (0..self.buffers.len())
+            .filter(|&i| Some(i) != front)
+            .min_by_key(|&i| self.buffers[i].content)
+            .ok_or_else(|| Error::new("the ring has no buffer to write"))
+    }
+
+    // Shows `ring` in a window `height` pixels tall at `scale` pixels per
+    // point. Copies only the rows the chosen buffer is missing.
+    fn show(&mut self, ring: &Ring<'_>, scale: CGFloat, height: i64) -> Result<()> {
+        if !self.history.iter().any(|(id, _, _)| *id == ring.id) {
+            self.history
+                .push_back((ring.id, ring.previous, ring.written.map(<[Rect]>::to_vec)));
+            if self.history.len() > RING_HISTORY {
+                self.history.pop_front();
+            }
+        }
+        let shift = ring.shift.rem_euclid(self.height.max(1));
+        if self.shown == Some((ring.id, shift, ring.rect)) {
+            return Ok(());
+        }
+        let held = self.front.and_then(|f| self.buffers[f].content);
+        if held != Some(ring.id) {
+            let back = self.target()?;
+            let missing = self.missing(self.buffers[back].content, ring.id);
+            {
+                let mut target =
+                    Locked::new(&self.buffers[back].surface, IOSurfaceLockOptions::empty())?;
+                // Mark each changed row once, so a row changed in several
+                // versions is copied only once. Rows are copied whole.
+                let mut stale = vec![missing.is_none(); self.height.max(0) as usize];
+                for r in missing.iter().flatten() {
+                    if let Some(r) = clip(*r, self.width, self.height) {
+                        stale[r.y as usize..(r.y + r.height) as usize].fill(true);
+                    }
+                }
+                let bytes = (self.width * 4) as usize;
+                for (row, _) in stale.iter().enumerate().filter(|(_, s)| **s) {
+                    let at = row * ring.stride as usize;
+                    let Some(from) = ring.pixels.get(at..at + bytes) else {
+                        continue;
+                    };
+                    target
+                        .row_mut(row as i64, 0, self.width)
+                        .copy_from_slice(from);
+                }
+            }
+            self.buffers[back].content = Some(ring.id);
+            self.front = Some(back);
+            let surface = &self.buffers[back].surface;
+            // SAFETY: IOSurfaceRef is toll-free bridged to the IOSurface object
+            // that a layer takes as contents; the layers retain it.
+            unsafe {
+                let contents = CFRetained::as_ptr(surface).as_ptr().cast::<AnyObject>();
+                self.upper.setContents(Some(&*contents));
+                self.lower.setContents(Some(&*contents));
+            }
+        }
+        // Show stored rows `shift..` at the top and rows `..shift` below them.
+        let r = ring.rect;
+        let above = self.height - shift;
+        place(
+            &self.upper,
+            (r.x, r.y, r.width, above),
+            (shift, above),
+            self.height,
+            scale,
+            height,
+        );
+        place(
+            &self.lower,
+            (r.x, r.y + above, r.width, shift),
+            (0, shift),
+            self.height,
+            scale,
+            height,
+        );
+        self.shown = Some((ring.id, shift, ring.rect));
+        Ok(())
+    }
+
+    // Frees every buffer except the one on screen.
+    fn trim(&mut self) {
+        let Some(front) = self.front else {
+            self.buffers.clear();
+            return;
+        };
+        if self.buffers.len() > 1 {
+            let shown = self.buffers.swap_remove(front);
+            self.buffers = vec![shown];
+            self.front = Some(0);
+        }
+    }
+}
+
+// Makes `layer` show rows `from..from + rows` of a buffer `stored` rows tall,
+// placed at window pixels `(x, y, width, rows)`. The window is `height`
+// pixels tall at `scale` pixels per point. Hides the layer if `rows` is 0.
+fn place(
+    layer: &CALayer,
+    (x, y, width, rows): (i64, i64, i64, i64),
+    (from, _): (i64, i64),
+    stored: i64,
+    scale: CGFloat,
+    height: i64,
+) {
+    if rows <= 0 || stored <= 0 {
+        layer.setHidden(true);
+        return;
+    }
+    // If the host layer is flipped, y grows downward; otherwise upward. The
+    // contents rectangle uses the same direction.
+    let down = flipped_override(layer.contentsAreFlipped(), "GOS_RING_DOWN");
+    let top = if down { y } else { height - (y + rows) };
+    layer.setContentsScale(scale);
+    layer.setFrame(CGRect::new(
+        CGPoint::new(x as CGFloat / scale, top as CGFloat / scale),
+        CGSize::new(width as CGFloat / scale, rows as CGFloat / scale),
+    ));
+    let contents_down = flipped_override(down, "GOS_RING_CONTENTS_DOWN");
+    let start = if contents_down {
+        from
+    } else {
+        stored - (from + rows)
+    };
+    layer.setContentsRect(CGRect::new(
+        CGPoint::new(0.0, start as CGFloat / stored as CGFloat),
+        CGSize::new(1.0, rows as CGFloat / stored as CGFloat),
+    ));
+    layer.setHidden(false);
+}
+
+// Returns `value`, flipped if the environment variable `name` is "1". This
+// lets a tester correct the layer orientation on a system that reports it
+// wrongly, without rebuilding.
+fn flipped_override(value: bool, name: &str) -> bool {
+    value ^ (std::env::var(name).as_deref() == Ok("1"))
 }
 
 thread_local! {
@@ -92,8 +336,56 @@ pub(crate) fn pixel_size(window: &Window) -> (i64, i64) {
 
 /// Paints into the buffer the layer shows next, which first receives what
 /// the shown frame changed outside `damage`, then shows it. `paint` must
-/// write every pixel of `damage`; `damage` empty repaints every pixel.
+/// write every pixel of `damage`; empty `damage` repaints every pixel. Any
+/// rings the window showed are removed.
 pub(crate) fn paint(
+    window: &Window,
+    damage: &[Rect],
+    paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
+) -> Result<()> {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    let painted = paint_main(window, damage, paint).and_then(|()| {
+        SURFACES.with_borrow_mut(|surfaces| match surfaces.get_mut(&window.id.0) {
+            Some(surface) => surface.show_rings(window, &[]),
+            None => Ok(()),
+        })
+    });
+    CATransaction::commit();
+    painted
+}
+
+/// Like `paint`, and also shows `rings` in layers below the window's
+/// surface. Everything happens in one transaction, so the screen never shows
+/// the surface from one frame with rings from another. With `damage` of
+/// `None`, the surface is left as it is.
+pub(crate) fn paint_rings(
+    window: &Window,
+    damage: Option<&[Rect]>,
+    rings: &[Ring<'_>],
+    paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
+) -> Result<()> {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    let painted = match damage {
+        Some(damage) => paint_main(window, damage, paint),
+        None => Ok(()),
+    }
+    .and_then(|()| {
+        let size = pixel_size(window);
+        SURFACES.with_borrow_mut(|surfaces| match surfaces.get_mut(&window.id.0) {
+            // After a resize the surface is repainted in full before any rings.
+            Some(surface) if (surface.width, surface.height) == size => {
+                surface.show_rings(window, rings)
+            }
+            _ => Ok(()),
+        })
+    });
+    CATransaction::commit();
+    painted
+}
+
+fn paint_main(
     window: &Window,
     damage: &[Rect],
     paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
@@ -159,6 +451,35 @@ pub(crate) fn capture(window: &Window) -> Result<Option<Captured>> {
             let at = (row * stride) as usize;
             pixels[at..at + from.len()].copy_from_slice(from);
         }
+        // Blend the surface over the rings, the way the screen shows them.
+        // The surface's pixels are premultiplied, so this is plain "over".
+        for ring in &surface.rings {
+            let (Some(front), Some((_, shift, r))) = (ring.front, ring.shown) else {
+                continue;
+            };
+            let under = Locked::new(&ring.buffers[front].surface, IOSurfaceLockOptions::ReadOnly)?;
+            for y in 0..r.height {
+                let row = r.y + y;
+                if row < 0 || row >= surface.height {
+                    continue;
+                }
+                let stored = (y + shift).rem_euclid(ring.height);
+                let from = under.row(stored, 0, ring.width);
+                for x in 0..r.width {
+                    let column = r.x + x;
+                    if column < 0 || column >= surface.width {
+                        continue;
+                    }
+                    let at = (row * stride + column * 4) as usize;
+                    let keep = 255 - u32::from(pixels[at + 3]);
+                    for c in 0..4 {
+                        let below = u32::from(from[(x * 4) as usize + c]);
+                        pixels[at + c] =
+                            (u32::from(pixels[at + c]) + (below * keep + 127) / 255).min(255) as u8;
+                    }
+                }
+            }
+        }
         Ok(Some(Captured {
             pixels,
             width: surface.width,
@@ -218,7 +539,53 @@ impl LayerSurface {
             refresh: refresh(window),
             recheck: None,
             last_paint: Instant::now(),
+            rings: Vec::new(),
         })
+    }
+
+    // Shows `rings` below the surface and removes rings no longer listed.
+    // The surface is marked opaque only when there are no rings.
+    fn show_rings(&mut self, window: &Window, rings: &[Ring<'_>]) -> Result<()> {
+        self.rings
+            .retain(|shown| rings.iter().any(|r| r.key == shown.key));
+        if rings.is_empty() {
+            self.layer.setOpaque(true);
+            return Ok(());
+        }
+        let host = self
+            .layer
+            .superlayer()
+            .ok_or_else(|| Error::new("the window's layer has no host"))?;
+        let (points_w, _) = point_size(window);
+        let scale = if points_w > 0 {
+            self.width as CGFloat / points_w as CGFloat
+        } else {
+            1.0
+        };
+        for ring in rings {
+            let r = ring.rect;
+            let size = (r.width, r.height);
+            let index = match self.rings.iter().position(|s| s.key == ring.key) {
+                Some(i) if (self.rings[i].width, self.rings[i].height) == size => i,
+                found => {
+                    if let Some(i) = found {
+                        self.rings.remove(i);
+                    }
+                    self.rings.push(RingLayer::new(
+                        ring.key,
+                        r.width,
+                        r.height,
+                        &host,
+                        &self.layer,
+                    ));
+                    self.rings.len() - 1
+                }
+            };
+            self.rings[index].show(ring, scale, self.height)?;
+        }
+        self.layer.setOpaque(false);
+        self.last_paint = Instant::now();
+        Ok(())
     }
 
     // Retires the buffers this window no longer shows, checking again one
@@ -260,7 +627,8 @@ impl LayerSurface {
     // Answers how long until that is due.
     fn release_spares(&mut self, now: Instant) -> Option<Duration> {
         let front = self.front?;
-        if self.buffers.len() < 2 {
+        let spare = |s: &Self| s.buffers.len() > 1 || s.rings.iter().any(|r| r.buffers.len() > 1);
+        if !spare(self) {
             return None;
         }
         let quiet = now.saturating_duration_since(self.last_paint);
@@ -270,6 +638,9 @@ impl LayerSurface {
         let shown = self.buffers.swap_remove(front);
         self.buffers = vec![shown];
         self.front = Some(0);
+        for ring in &mut self.rings {
+            ring.trim();
+        }
         None
     }
 
@@ -290,13 +661,14 @@ impl LayerSurface {
         }
     }
 
-    // A buffer to paint: one the window server is not reading, a new one
-    // while the pool has room, else the one holding the oldest frame.
+    // Picks a buffer to paint. Prefer a buffer the window server is not
+    // reading, and among those the newest, since it has the least to copy.
+    // Otherwise make a new one if the pool has room, or reuse the oldest.
     fn target(&mut self) -> Result<usize> {
         let front = self.front;
         let idle = (0..self.buffers.len())
-            .filter(|&i| Some(i) != front)
-            .find(|&i| !self.buffers[i].surface.is_in_use());
+            .filter(|&i| Some(i) != front && !self.buffers[i].surface.is_in_use())
+            .max_by_key(|&i| self.buffers[i].frame);
         if let Some(i) = idle {
             return Ok(i);
         }
@@ -352,7 +724,9 @@ impl LayerSurface {
         self.frame += 1;
         self.buffers[back].frame = Some(self.frame);
         self.history.push_back((self.frame, damage.to_vec()));
-        if self.history.len() > POOL {
+        // Keep enough history that a buffer the window server held for a few
+        // frames can still be updated by copying only what changed.
+        if self.history.len() > HISTORY {
             self.history.pop_front();
         }
         self.show(window, back);

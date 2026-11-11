@@ -38,6 +38,32 @@ impl PixelFormat {
     }
 }
 
+/// A rectangle of opaque pixels stored as a ring of rows, such as a terminal's
+/// scrolling text. Row `y` on screen is stored row `(y + shift) % height`, so
+/// scrolling changes `shift` instead of moving pixels.
+///
+/// On macOS the ring is shown in its own layers below the window's surface.
+/// Scrolling then moves no pixels, and each frame copies only the rows that
+/// changed. The window's surface is transparent over the rectangle, so the
+/// ring shows through, and anything drawn on top (a cursor, a scrollbar)
+/// stays in the window's surface.
+#[derive(Debug, Clone, Copy)]
+pub struct Ring<'a> {
+    /// Identifies the ring across frames.
+    pub key: u64,
+    /// Where the ring is shown, in window pixels.
+    pub rect: crate::display::Rect,
+    /// The stored rows, in B, G, R, A byte order, `stride` bytes apart.
+    pub pixels: &'a [u8],
+    pub stride: i64,
+    pub shift: i64,
+    /// An id for this content, and the id of the content before it.
+    pub id: u64,
+    pub previous: u64,
+    /// The stored rows that changed since `previous`, or `None` if unknown.
+    pub written: Option<&'a [crate::display::Rect]>,
+}
+
 /// A software framebuffer for one window: `height` rows of `stride` bytes,
 /// each pixel four bytes in `format`'s order.
 #[derive(Debug, Clone, PartialEq)]
@@ -399,6 +425,36 @@ impl Window {
             },
             "presenting the frame",
         )
+    }
+
+    /// Whether `paint_surface_rings` can show rings in their own layers.
+    pub fn shows_rings(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            return true;
+        }
+        false
+    }
+
+    /// Like `paint_surface`, and also shows `rings` below the surface. With
+    /// `damage` of `None`, only the rings are updated. On platforms without
+    /// ring layers this is `paint_surface`, and `rings` must be empty.
+    pub fn paint_surface_rings(
+        &self,
+        damage: Option<&[crate::display::Rect]>,
+        rings: &[Ring<'_>],
+        paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
+    ) -> Result<()> {
+        support::require_main_thread("Window::paint_surface_rings");
+        #[cfg(target_os = "macos")]
+        if crate::macos::layer::applies() {
+            return crate::macos::layer::paint_rings(self, damage, rings, paint);
+        }
+        debug_assert!(rings.is_empty(), "rings shown where layers are not kept");
+        match damage {
+            Some(damage) => self.paint_surface(damage, paint),
+            None => Ok(()),
+        }
     }
 
     /// What the window shows now: a copy of its software surface as a frame.
