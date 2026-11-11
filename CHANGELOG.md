@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.17 - Overlays above the window's surface
+
+- macOS: `Window::paint_surface_rings` also takes `overlays`, small areas such as a blinking cursor's cell, each shown in a layer of its own above the surface and the rings. Showing, hiding or moving one repaints nothing. Its pixels are the finished ones the caller painted, so it looks exactly as it would painted into the surface.
+- macOS: a window frees its spare buffers 250 ms after its last paint, without waiting for the system to finish showing them.
+
 ## 0.1.16 - Scrolling without copying on macOS
 
 - macOS: `Window::paint_surface_rings` shows a ring of rows, such as a terminal's scrolling text, in layers of its own below the window's surface. Scrolling changes which rows the layers show instead of copying pixels, and each frame copies only the rows that changed. `Window::shows_rings` says whether a window can do this; elsewhere `paint_surface_rings` works like `paint_surface`.

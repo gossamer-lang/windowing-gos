@@ -27,7 +27,7 @@ use sdl3_sys::video::{
 };
 
 use crate::display::Rect;
-use crate::surface::{PixelFormat, Ring};
+use crate::surface::{Overlay, PixelFormat, Ring};
 use crate::window::Window;
 use crate::{Error, Result};
 
@@ -66,14 +66,34 @@ struct LayerSurface {
     // What each of the latest frames changed, by frame number, so a buffer
     // holding an earlier frame catches up by copying only those rectangles.
     history: VecDeque<(u64, Vec<Rect>)>,
-    // One refresh of the window's display.
-    refresh: Duration,
-    // When to look again at a buffer the window server still reads, and the
-    // wait that led there.
-    recheck: Option<(Instant, Duration)>,
     last_paint: Instant,
     // Rings shown below the surface. The surface is transparent over them.
     rings: Vec<RingLayer>,
+    // Overlays shown above the surface and the rings.
+    overlays: Vec<OverlayLayer>,
+}
+
+// An area shown above the window's surface, such as a cursor's cell. Its
+// layer shows an IOSurface that holds the area's finished pixels, one surface
+// pixel to one window pixel. The pixels already include what lies below the
+// area, so Core Animation does no blending of its own there, which could come
+// out differently from the software painter's.
+struct OverlayLayer {
+    layer: Retained<CALayer>,
+    // The key that identifies the pixels it shows, and where it shows them.
+    key: Option<u64>,
+    rect: Option<Rect>,
+    // The surface shown now, and the one shown before it. The next change is
+    // written into the one shown before, once the window server has finished
+    // reading it.
+    contents: Option<CFRetained<IOSurfaceRef>>,
+    spare: Option<CFRetained<IOSurfaceRef>>,
+}
+
+impl Drop for OverlayLayer {
+    fn drop(&mut self) {
+        self.layer.removeFromSuperlayer();
+    }
 }
 
 // How many recent versions of a ring's content are kept, with the rows each
@@ -347,7 +367,9 @@ pub(crate) fn paint(
     CATransaction::setDisableActions(true);
     let painted = paint_main(window, damage, paint).and_then(|()| {
         SURFACES.with_borrow_mut(|surfaces| match surfaces.get_mut(&window.id.0) {
-            Some(surface) => surface.show_rings(window, &[]),
+            Some(surface) => surface
+                .show_rings(window, &[])
+                .and_then(|()| surface.show_overlays(window, &[])),
             None => Ok(()),
         })
     });
@@ -363,6 +385,7 @@ pub(crate) fn paint_rings(
     window: &Window,
     damage: Option<&[Rect]>,
     rings: &[Ring<'_>],
+    overlays: &[Overlay],
     paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
 ) -> Result<()> {
     CATransaction::begin();
@@ -375,9 +398,9 @@ pub(crate) fn paint_rings(
         let size = pixel_size(window);
         SURFACES.with_borrow_mut(|surfaces| match surfaces.get_mut(&window.id.0) {
             // After a resize the surface is repainted in full before any rings.
-            Some(surface) if (surface.width, surface.height) == size => {
-                surface.show_rings(window, rings)
-            }
+            Some(surface) if (surface.width, surface.height) == size => surface
+                .show_rings(window, rings)
+                .and_then(|()| surface.show_overlays(window, overlays)),
             _ => Ok(()),
         })
     });
@@ -480,6 +503,38 @@ pub(crate) fn capture(window: &Window) -> Result<Option<Captured>> {
                 }
             }
         }
+        // Overlays are shown above everything else. Their pixels are
+        // premultiplied, like the surface's, and go over what is below.
+        for overlay in &surface.overlays {
+            let (Some(contents), Some(r)) = (&overlay.contents, overlay.rect) else {
+                continue;
+            };
+            if overlay.layer.isHidden() {
+                continue;
+            }
+            let above = Locked::new(contents, IOSurfaceLockOptions::ReadOnly)?;
+            for y in 0..r.height {
+                let row = r.y + y;
+                if row < 0 || row >= surface.height {
+                    continue;
+                }
+                let from = above.row(y, 0, r.width);
+                for x in 0..r.width {
+                    let column = r.x + x;
+                    if column < 0 || column >= surface.width {
+                        continue;
+                    }
+                    let at = (row * stride + column * 4) as usize;
+                    let src = &from[(x * 4) as usize..(x * 4 + 4) as usize];
+                    let keep = 255 - u32::from(src[3]);
+                    for c in 0..4 {
+                        let below = u32::from(pixels[at + c]);
+                        pixels[at + c] =
+                            (u32::from(src[c]) + (below * keep + 127) / 255).min(255) as u8;
+                    }
+                }
+            }
+        }
         Ok(Some(Captured {
             pixels,
             width: surface.width,
@@ -489,9 +544,8 @@ pub(crate) fn capture(window: &Window) -> Result<Option<Captured>> {
     })
 }
 
-/// Hands every buffer a window no longer shows back to the system to
-/// reclaim, once the window server has stopped reading it. Answers how long
-/// the caller may wait before calling again while it still reads one.
+/// Frees the buffers a window no longer shows, once it has been quiet for a
+/// moment. Returns how long the caller may wait before calling again.
 pub(crate) fn retire() -> Option<Duration> {
     let now = Instant::now();
     SURFACES.with_borrow_mut(|surfaces| {
@@ -536,11 +590,108 @@ impl LayerSurface {
             front: None,
             frame: 0,
             history: VecDeque::new(),
-            refresh: refresh(window),
-            recheck: None,
             last_paint: Instant::now(),
             rings: Vec::new(),
+            overlays: Vec::new(),
         })
+    }
+
+    // Shows `overlays` above the surface and the rings, reusing the layers it
+    // has. Layers no longer listed are hidden, not removed, so a blinking
+    // cursor reuses its layer and pixels instead of making them at every
+    // blink. An overlay's pixels are written only when its key changes.
+    fn show_overlays(&mut self, window: &Window, overlays: &[Overlay]) -> Result<()> {
+        for unused in self.overlays.iter().skip(overlays.len()) {
+            unused.layer.setHidden(true);
+        }
+        if overlays.is_empty() {
+            return Ok(());
+        }
+        let host = self
+            .layer
+            .superlayer()
+            .ok_or_else(|| Error::new("the window's layer has no host"))?;
+        let (points_w, _) = point_size(window);
+        let scale = if points_w > 0 {
+            self.width as CGFloat / points_w as CGFloat
+        } else {
+            1.0
+        };
+        for (i, overlay) in overlays.iter().enumerate() {
+            if i == self.overlays.len() {
+                let layer = CALayer::new();
+                layer.setOpaque(false);
+                // SAFETY: the filters are constants Core Animation defines.
+                unsafe {
+                    layer.setMagnificationFilter(kCAFilterNearest);
+                    layer.setMinificationFilter(kCAFilterNearest);
+                }
+                // Added last, so above the surface and every ring band.
+                host.addSublayer(&layer);
+                self.overlays.push(OverlayLayer {
+                    layer,
+                    key: None,
+                    rect: None,
+                    contents: None,
+                    spare: None,
+                });
+            }
+            let shown = &mut self.overlays[i];
+            if shown.key != Some(overlay.key) {
+                let (w, h) = (overlay.rect.width, overlay.rect.height);
+                if w <= 0 || h <= 0 || overlay.pixels.len() != (w * h * 4) as usize {
+                    return Err(Error::new("an overlay's pixels do not fill its rectangle"));
+                }
+                // Write into the spare surface only once the window server has
+                // finished reading it, so pixels are never changed while they
+                // are on screen. Otherwise make a new one.
+                let target = match shown.spare.take() {
+                    Some(spare)
+                        if (spare.width() as i64, spare.height() as i64) == (w, h)
+                            && !spare.is_in_use() =>
+                    {
+                        spare
+                    }
+                    _ => buffer(w, h)?.surface,
+                };
+                {
+                    let mut locked = Locked::new(&target, IOSurfaceLockOptions::empty())?;
+                    for (y, from) in overlay.pixels.chunks_exact((w * 4) as usize).enumerate() {
+                        let into = locked.row_mut(y as i64, 0, w);
+                        for (d, s) in into.chunks_exact_mut(4).zip(from.chunks_exact(4)) {
+                            d.copy_from_slice(&[s[2], s[1], s[0], s[3]]);
+                        }
+                    }
+                }
+                let opaque = overlay.pixels.chunks_exact(4).all(|p| p[3] == 255);
+                shown.layer.setOpaque(opaque);
+                // SAFETY: IOSurfaceRef is toll-free bridged to the IOSurface
+                // object that a layer takes as contents; the layer retains it.
+                unsafe {
+                    let contents = CFRetained::as_ptr(&target).as_ptr().cast::<AnyObject>();
+                    shown.layer.setContents(Some(&*contents));
+                }
+                shown.spare = shown.contents.replace(target);
+                shown.key = Some(overlay.key);
+            }
+            if shown.rect != Some(overlay.rect) {
+                let r = overlay.rect;
+                let down = flipped_override(shown.layer.contentsAreFlipped(), "GOS_RING_DOWN");
+                let top = if down {
+                    r.y
+                } else {
+                    self.height - (r.y + r.height)
+                };
+                shown.layer.setContentsScale(scale);
+                shown.layer.setFrame(CGRect::new(
+                    CGPoint::new(r.x as CGFloat / scale, top as CGFloat / scale),
+                    CGSize::new(r.width as CGFloat / scale, r.height as CGFloat / scale),
+                ));
+                shown.rect = Some(r);
+            }
+            shown.layer.setHidden(false);
+        }
+        Ok(())
     }
 
     // Shows `rings` below the surface and removes rings no longer listed.
@@ -588,43 +739,30 @@ impl LayerSurface {
         Ok(())
     }
 
-    // Retires the buffers this window no longer shows, checking again one
-    // refresh later, then at twice each previous wait, while the window
-    // server still reads one.
+    // Marks the spares the window server has finished reading as purgeable,
+    // and frees every spare once the window has been quiet for QUIET. Returns
+    // how long until that is due.
     fn settle(&mut self, now: Instant) -> Option<Duration> {
-        if let Some((due, _)) = self.recheck
-            && now < due
-        {
-            return Some(due - now);
-        }
-        let mut reading = false;
         for (i, buffer) in self.buffers.iter_mut().enumerate() {
-            if Some(i) == self.front || buffer.volatile {
+            // Purging a buffer the window server still reads could show
+            // garbage, so only finished ones are marked.
+            if Some(i) == self.front || buffer.volatile || buffer.surface.is_in_use() {
                 continue;
             }
-            if buffer.surface.is_in_use() {
-                reading = true;
-            } else {
-                buffer.volatile = purgeable(
-                    &buffer.surface,
-                    IOSurfacePurgeabilityState::PurgeableVolatile,
-                )
-                .is_some();
-            }
+            buffer.volatile = purgeable(
+                &buffer.surface,
+                IOSurfacePurgeabilityState::PurgeableVolatile,
+            )
+            .is_some();
         }
-        if !reading {
-            self.recheck = None;
-            return self.release_spares(now);
-        }
-        let wait = self.recheck.map_or(self.refresh, |(_, wait)| wait * 2);
-        self.recheck = Some((now + wait, wait));
-        Some(wait)
+        self.release_spares(now)
     }
 
     // Frees every buffer but the shown one once the window has gone quiet,
     // since a volatile surface still counts toward the process's footprint;
     // the next paint makes a buffer and copies the shown frame into it.
-    // Answers how long until that is due.
+    // Freeing a buffer the window server still reads is safe: it holds its
+    // own reference until it is done. Returns how long until this is due.
     fn release_spares(&mut self, now: Instant) -> Option<Duration> {
         let front = self.front?;
         let spare = |s: &Self| s.buffers.len() > 1 || s.rings.iter().any(|r| r.buffers.len() > 1);
@@ -731,8 +869,6 @@ impl LayerSurface {
         }
         self.show(window, back);
         self.front = Some(back);
-        self.refresh = refresh(window);
-        self.recheck = None;
         Ok(())
     }
 
@@ -761,15 +897,6 @@ impl LayerSurface {
         }
         CATransaction::commit();
     }
-}
-
-// One refresh of the window's display, or of a 60 Hz one when it reports
-// no rate.
-fn refresh(window: &Window) -> Duration {
-    let rate = window
-        .display()
-        .map_or(0.0, |display| display.mode.refresh_rate);
-    Duration::from_secs_f64(1.0 / if rate > 0.0 { rate } else { 60.0 })
 }
 
 // Sets how the system may treat `surface`'s pages; answers the state they

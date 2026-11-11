@@ -64,6 +64,39 @@ pub struct Ring<'a> {
     pub written: Option<&'a [crate::display::Rect]>,
 }
 
+/// A small area shown above the window's surface, such as a blinking cursor's
+/// cell. Where the window system composites layers it gets a layer of its
+/// own, so showing, hiding or moving it repaints nothing. Its pixels are the
+/// finished result: they already include whatever is painted below the area,
+/// so the area looks exactly as it would if it were painted into the surface.
+#[derive(Clone)]
+pub struct Overlay {
+    /// Where it is shown, in window pixels.
+    pub rect: crate::display::Rect,
+    /// `rect.height` rows of `rect.width` pixels, each red, green, blue and
+    /// alpha, premultiplied as the surface's pixels are.
+    pub pixels: std::sync::Arc<[u8]>,
+    /// Identifies `pixels`: overlays with the same key show the same pixels.
+    pub key: u64,
+}
+
+impl PartialEq for Overlay {
+    fn eq(&self, other: &Self) -> bool {
+        self.rect == other.rect && self.key == other.key
+    }
+}
+
+impl Eq for Overlay {}
+
+impl std::fmt::Debug for Overlay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Overlay")
+            .field("rect", &self.rect)
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A software framebuffer for one window: `height` rows of `stride` bytes,
 /// each pixel four bytes in `format`'s order.
 #[derive(Debug, Clone, PartialEq)]
@@ -436,21 +469,26 @@ impl Window {
         false
     }
 
-    /// Like `paint_surface`, and also shows `rings` below the surface. With
-    /// `damage` of `None`, only the rings are updated. On platforms without
-    /// ring layers this is `paint_surface`, and `rings` must be empty.
+    /// Like `paint_surface`, and also shows `rings` below the surface and
+    /// `overlays` above it. With `damage` of `None`, only the rings and
+    /// overlays are updated. On platforms without these layers this is
+    /// `paint_surface`, and `rings` and `overlays` must be empty.
     pub fn paint_surface_rings(
         &self,
         damage: Option<&[crate::display::Rect]>,
         rings: &[Ring<'_>],
+        overlays: &[Overlay],
         paint: impl FnOnce(&mut [u8], i64, i64, i64, PixelFormat),
     ) -> Result<()> {
         support::require_main_thread("Window::paint_surface_rings");
         #[cfg(target_os = "macos")]
         if crate::macos::layer::applies() {
-            return crate::macos::layer::paint_rings(self, damage, rings, paint);
+            return crate::macos::layer::paint_rings(self, damage, rings, overlays, paint);
         }
-        debug_assert!(rings.is_empty(), "rings shown where layers are not kept");
+        debug_assert!(
+            rings.is_empty() && overlays.is_empty(),
+            "rings or overlays shown where layers are not kept"
+        );
         match damage {
             Some(damage) => self.paint_surface(damage, paint),
             None => Ok(()),
