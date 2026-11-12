@@ -1044,6 +1044,8 @@ pub(crate) fn create(options: &WindowOptions, redraw_type: u32) -> Result<Window
             p.handle.cast::<c_void>(),
         )?;
     }
+    #[cfg(free_unix)]
+    let _visual = X11Visual::for_window(options.transparent);
     // SAFETY: props is a live property set.
     let handle = unsafe { SDL_CreateWindowWithProperties(props.0) };
     if handle.is_null() {
@@ -1102,6 +1104,43 @@ pub(crate) fn set_app_icon(rgba: &[u8], width: i64, height: i64) -> Result<()> {
         offer_icon(handle, icon)?;
     }
     Ok(())
+}
+
+/// Asks SDL for a 32-bit visual while a transparent window is created on X11,
+/// where SDL picks one only for OpenGL windows and a 24-bit visual has no
+/// alpha for the compositor to read. Dropping it hands the choice back.
+#[cfg(free_unix)]
+struct X11Visual(bool);
+
+#[cfg(free_unix)]
+impl X11Visual {
+    fn for_window(transparent: bool) -> Self {
+        use sdl3_sys::hints::{SDL_HINT_VIDEO_X11_WINDOW_VISUALID, SDL_SetHint};
+
+        if !transparent || crate::video_driver() != "x11" {
+            return Self(false);
+        }
+        let Some(id) = crate::xlib::argb_visual() else {
+            return Self(false);
+        };
+        let Ok(text) = std::ffi::CString::new(format!("{id:#x}")) else {
+            return Self(false);
+        };
+        // SAFETY: both strings are NUL-terminated and SDL copies the value.
+        Self(unsafe { SDL_SetHint(SDL_HINT_VIDEO_X11_WINDOW_VISUALID, text.as_ptr()) })
+    }
+}
+
+#[cfg(free_unix)]
+impl Drop for X11Visual {
+    fn drop(&mut self) {
+        if self.0 {
+            // SAFETY: the name is a NUL-terminated constant.
+            unsafe {
+                sdl3_sys::hints::SDL_ResetHint(sdl3_sys::hints::SDL_HINT_VIDEO_X11_WINDOW_VISUALID)
+            };
+        }
+    }
 }
 
 /// The X11 window of every open window, for the input time they share.

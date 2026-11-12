@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.18 - Transparent windows on X11
+
+- X11: a transparent window gets a 32-bit visual, so a compositor blends it with what lies behind. SDL gave such windows a 24-bit visual, which has no alpha.
+- `VERSION` names the library's own version again.
+
 ## 0.1.17 - Overlays above the window's surface
 
 - macOS: `Window::paint_surface_rings` also takes `overlays`, small areas such as a blinking cursor's cell, each shown in a layer of its own above the surface and the rings. Showing, hiding or moving one repaints nothing. Its pixels are the finished ones the caller painted, so it looks exactly as it would painted into the surface.

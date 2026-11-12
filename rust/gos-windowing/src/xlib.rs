@@ -12,6 +12,39 @@ pub(crate) fn xlib() -> Option<&'static Xlib> {
     XLIB.get_or_init(|| Xlib::open().ok()).as_ref()
 }
 
+/// The id of a 32-bit TrueColor visual, whose fourth byte a compositor reads
+/// as alpha; `None` when the server offers none or Xlib is missing. Visual
+/// ids hold for every connection to a server, so a connection of its own
+/// asks, once.
+pub(crate) fn argb_visual() -> Option<u64> {
+    static VISUAL: OnceLock<Option<u64>> = OnceLock::new();
+    *VISUAL.get_or_init(|| {
+        let x = xlib()?;
+        // SAFETY: a null name opens the display $DISPLAY names, the server
+        // SDL connected to.
+        let display = unsafe { (x.XOpenDisplay)(std::ptr::null()) };
+        if display.is_null() {
+            return None;
+        }
+        let mut info = std::mem::MaybeUninit::<xlib::XVisualInfo>::zeroed();
+        // SAFETY: display is a live connection and info receives the match.
+        let found = unsafe {
+            (x.XMatchVisualInfo)(
+                display,
+                (x.XDefaultScreen)(display),
+                32,
+                xlib::TrueColor,
+                info.as_mut_ptr(),
+            )
+        };
+        // SAFETY: XMatchVisualInfo filled info when it found a visual.
+        let id = (found != 0).then(|| unsafe { info.assume_init() }.visualid);
+        // SAFETY: display was opened above and nothing else uses it.
+        unsafe { (x.XCloseDisplay)(display) };
+        id
+    })
+}
+
 /// The atom `name` names on `display`, created when missing; 0 for a name
 /// holding a NUL.
 pub(crate) fn atom(x: &Xlib, display: *mut Display, name: &str) -> Atom {
