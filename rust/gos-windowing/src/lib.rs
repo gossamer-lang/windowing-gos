@@ -223,6 +223,27 @@ fn before_wait() -> Option<Duration> {
     release
 }
 
+// What `wait` yields by `deadline` on `now`'s clock, given the milliseconds
+// left, rounded up; `None` once the deadline passes with nothing. SDL times
+// its waits with CLOCK_MONOTONIC_RAW, which runs ahead of `Instant`'s clock
+// while the system clock is slewed back, so a wait that ends early is
+// followed by another for the time left.
+fn wait_until<T>(
+    deadline: Instant,
+    now: impl Fn() -> Instant,
+    mut wait: impl FnMut(i64) -> Result<Option<T>>,
+) -> Result<Option<T>> {
+    loop {
+        let left = idle::millis(deadline.saturating_duration_since(now()));
+        if let Some(found) = wait(left)? {
+            return Ok(Some(found));
+        }
+        if now() >= deadline {
+            return Ok(None);
+        }
+    }
+}
+
 fn new_event() -> SDL_Event {
     // SAFETY: an all-zero SDL_Event is a valid value of the union.
     unsafe { std::mem::zeroed() }
@@ -302,28 +323,25 @@ impl App {
     }
 
     /// Waits up to `ms` milliseconds for the next event: `None` when none came.
+    /// The wait ends by `Instant`'s clock, which callers time their deadlines
+    /// with, so no wait ends before `ms` has passed on it.
     pub fn wait_timeout(&self, ms: i64) -> Result<Option<Event>> {
         support::require_main_thread("App::wait_timeout");
-        let started = Instant::now();
+        let Some(deadline) =
+            Instant::now().checked_add(Duration::from_millis(u64::try_from(ms).unwrap_or(0)))
+        else {
+            return self.wait().map(Some);
+        };
         let mut e = new_event();
-        loop {
-            let left = ms - started.elapsed().as_millis() as i64;
-            if left < 0 {
-                return Ok(None);
-            }
+        wait_until(deadline, Instant::now, |left| {
             let bound = before_wait().map_or(left, |due| idle::millis(due).min(left));
             let slice = support::c_int(bound, "a wait timeout")?;
             // SAFETY: e is valid storage SDL fills.
             if !hooks::pumping(|| unsafe { SDL_WaitEventTimeout(&mut e, slice) }) {
-                if bound < left {
-                    continue;
-                }
                 return Ok(None);
             }
-            if let Some(event) = self.take(&e) {
-                return Ok(Some(event));
-            }
-        }
+            Ok(self.take(&e))
+        })
     }
 
     /// The next event of the batch the platform has delivered, without
@@ -461,4 +479,61 @@ pub fn video_driver() -> String {
 pub fn sdl_version() -> String {
     let v = SDL_GetVersion();
     format!("{}.{}.{}", v / 1_000_000, (v / 1000) % 1000, v % 1000)
+}
+
+#[cfg(test)]
+mod wait_tests {
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    use super::wait_until;
+
+    #[test]
+    fn a_wait_whose_clock_runs_ahead_still_ends_at_the_deadline() {
+        let start = Instant::now();
+        let clock = Cell::new(start);
+        let deadline = start + Duration::from_millis(60_000);
+        let mut asked = vec![];
+        let found: Option<()> = wait_until(
+            deadline,
+            || clock.get(),
+            |left| {
+                asked.push(left);
+                // The wait's own clock ends it 60 ms short of what it was given.
+                let waited = Duration::from_millis(u64::try_from(left).unwrap())
+                    .saturating_sub(Duration::from_millis(60));
+                clock.set(clock.get() + waited.max(Duration::from_millis(1)));
+                Ok(None)
+            },
+        )
+        .unwrap();
+        assert_eq!(found, None);
+        assert!(clock.get() >= deadline);
+        assert_eq!(asked[0], 60_000);
+        assert!(asked.len() > 1);
+    }
+
+    #[test]
+    fn a_zero_wait_polls_once() {
+        let now = Instant::now();
+        let mut calls = vec![];
+        let found: Option<()> = wait_until(
+            now,
+            || now,
+            |left| {
+                calls.push(left);
+                Ok(None)
+            },
+        )
+        .unwrap();
+        assert_eq!(found, None);
+        assert_eq!(calls, vec![0]);
+    }
+
+    #[test]
+    fn an_event_ends_the_wait_before_the_deadline() {
+        let now = Instant::now();
+        let found = wait_until(now + Duration::from_secs(5), || now, |_| Ok(Some(7))).unwrap();
+        assert_eq!(found, Some(7));
+    }
 }

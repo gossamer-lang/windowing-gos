@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.19 - Waits end on time
+
+- `App::wait_timeout` no longer returns before its timeout has passed on the clock its caller keeps, so a timer is not woken for early. SDL times its waits on a clock the system's time correction does not slow, and the two drift apart while the system clock is corrected.
+
 ## 0.1.18 - Transparent windows on X11
 
 - X11: a transparent window gets a 32-bit visual, so a compositor blends it with what lies behind. SDL gave such windows a 24-bit visual, which has no alpha.
