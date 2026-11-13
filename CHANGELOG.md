@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.20 - Quit signals reach an idle app on macOS
+
+- macOS: SIGTERM and SIGINT end an idle app's wait, so `kill`, `pkill` and logout quit it at once. SDL only marked the quit for the next event, and an idle app on macOS could wait for one indefinitely.
+
 ## 0.1.19 - Waits end on time
 
 - `App::wait_timeout` no longer returns before its timeout has passed on the clock its caller keeps, so a timer is not woken for early. SDL times its waits on a clock the system's time correction does not slow, and the two drift apart while the system clock is corrected.

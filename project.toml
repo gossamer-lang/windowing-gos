@@ -1,6 +1,6 @@
 [project]
 id = "github.com/gossamer-lang/windowing-gos"
-version = "0.1.19"
+version = "0.1.20"
 gossamer-version = "^v0.76.0"
 authors = ["Dan Pozmanter"]
 license = "Apache 2.0"

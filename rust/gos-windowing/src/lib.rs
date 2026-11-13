@@ -164,10 +164,14 @@ pub fn init(name: &str, options: &InitOptions) -> Result<App> {
     system::PREFERENCES_EVENT_TYPE.store(base + event::PREFERENCES_OFFSET, Ordering::Release);
     hotkey::HOTKEY_EVENT_TYPE.store(base + event::HOTKEY_OFFSET, Ordering::Release);
     access::set_wake_event(base + event::WAKE_OFFSET);
-    Ok(App {
+    let app = App {
         event_base: base,
         pending_wake: Arc::new(AtomicBool::new(false)),
-    })
+    };
+    // A signal does not interrupt the AppKit run loop's wait.
+    #[cfg(target_os = "macos")]
+    macos::signals::wake_on_quit_signals(app.waker());
+    Ok(app)
 }
 
 #[cfg(free_unix)]
