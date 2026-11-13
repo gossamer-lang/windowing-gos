@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.21 - Imports of its own
+
+- Each module imports what it uses, so the library builds with a Gossamer that keeps a module's imports to itself.
+
 ## 0.1.20 - Quit signals reach an idle app on macOS
 
 - macOS: SIGTERM and SIGINT end an idle app's wait, so `kill`, `pkill` and logout quit it at once. SDL only marked the quit for the next event, and an idle app on macOS could wait for one indefinitely.

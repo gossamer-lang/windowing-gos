@@ -40,7 +40,7 @@ use windowing_app
 use windowing_hooks
 
 use crate::support
-use crate::{cursor, dialog, display, drag, event, hotkey, instance, keys, menu, notify, support, surface, system, tray, waker, window, wire}
+use crate::{capabilities, cursor, dialog, display, drag, event, hotkey, instance, keys, menu, notify, support, surface, system, tray, waker, window, wire}
 
 pub type Capabilities = capabilities::Capabilities
 pub type Capability = capabilities::Capability
@@ -108,7 +108,7 @@ pub type Claim = instance::Claim
 pub type InstanceRequest = instance::Request
 
 /// The library's version.
-pub const VERSION: String = "0.1.20"
+pub const VERSION: String = "0.1.21"
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.

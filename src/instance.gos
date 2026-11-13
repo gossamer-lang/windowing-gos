@@ -3,9 +3,12 @@
 // macOS native LaunchServices events remain available as OpenRequested.
 
 use std::errors
+use std::encoding::json
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 use std::os
+use windowing_desktop
+
 use crate::support
 
 /// What a later launch asked the running instance to do.
