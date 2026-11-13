@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "gos-windowing"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "block2",
  "getrandom",
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "windowing-binding"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "gos-windowing",
  "gossamer-binding",

@@ -127,6 +127,122 @@ pub fn screensaver_enabled() -> bool {
     unsafe { SDL_ScreenSaverEnabled() }
 }
 
+/// Moves this process into a systemd scope of its own when it runs in the
+/// cgroup of a service other than `app_id`'s, such as the launcher or shortcut
+/// daemon that started it. Stopping or restarting a service ends every process
+/// in its cgroup, programs this one starts later included. Returns once the
+/// process has moved.
+#[cfg(target_os = "linux")]
+pub fn own_scope(app_id: &str) -> Result<()> {
+    scope::own(app_id)
+}
+
+/// Other systems keep no service cgroups.
+#[cfg(not(target_os = "linux"))]
+pub fn own_scope(_app_id: &str) -> Result<()> {
+    Ok(())
+}
+
+// A transient scope from the user's systemd instance, named as the systemd
+// desktop integration guide names an application's: `app-<id>-<random>.scope`.
+#[cfg(target_os = "linux")]
+mod scope {
+    use zbus::blocking::MessageIterator;
+    use zbus::zvariant::{OwnedObjectPath, Value};
+
+    use crate::{Error, Result};
+
+    const SYSTEMD: &str = "org.freedesktop.systemd1";
+    const PATH: &str = "/org/freedesktop/systemd1";
+    const MANAGER: &str = "org.freedesktop.systemd1.Manager";
+
+    fn bus_error(e: impl std::fmt::Display) -> Error {
+        Error::new(format!("starting a scope: {e}"))
+    }
+
+    pub(super) fn own(app_id: &str) -> Result<()> {
+        // Without the file there is no cgroup to leave.
+        let Ok(groups) = std::fs::read_to_string("/proc/self/cgroup") else {
+            return Ok(());
+        };
+        if foreign_service(&groups, app_id).is_none() {
+            return Ok(());
+        }
+        let connection =
+            crate::bus::session().ok_or_else(|| Error::new("the session bus is unavailable"))?;
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .path(PATH)
+            .and_then(|b| b.interface(MANAGER))
+            .and_then(|b| b.member("JobRemoved"))
+            .map(|b| b.build())
+            .map_err(bus_error)?;
+        // Subscribing before the call keeps a quick job's end from slipping past.
+        let removed =
+            MessageIterator::for_match_rule(rule, &connection, Some(16)).map_err(bus_error)?;
+        let pid = std::process::id();
+        let name = format!("app-{}-{pid}.scope", escape(app_id));
+        let properties: Vec<(&str, Value)> = vec![
+            ("Description", Value::from(app_id)),
+            ("PIDs", Value::from(vec![pid])),
+        ];
+        let auxiliary: Vec<(&str, Vec<(&str, Value)>)> = Vec::new();
+        let reply = connection
+            .call_method(
+                Some(SYSTEMD),
+                PATH,
+                Some(MANAGER),
+                "StartTransientUnit",
+                &(name.as_str(), "fail", properties, auxiliary),
+            )
+            .map_err(bus_error)?;
+        let job: OwnedObjectPath = reply.body().deserialize().map_err(bus_error)?;
+        // The process moves when the job runs, which the reply does not wait for.
+        for message in removed {
+            let message = message.map_err(bus_error)?;
+            let (_, path, _, result): (u32, OwnedObjectPath, String, String) =
+                message.body().deserialize().map_err(bus_error)?;
+            if path == job {
+                return match result.as_str() {
+                    "done" => Ok(()),
+                    _ => Err(Error::new(format!(
+                        "systemd's job for {name} ended {result}"
+                    ))),
+                };
+            }
+        }
+        Err(Error::new(
+            "the session bus closed before systemd started the scope",
+        ))
+    }
+
+    /// The service unit whose cgroup `groups`, the text of
+    /// `/proc/self/cgroup`, places the process in, when it is a service and
+    /// not one of `app_id`'s own.
+    pub(super) fn foreign_service<'a>(groups: &'a str, app_id: &str) -> Option<&'a str> {
+        // A hybrid hierarchy names systemd's tree; a unified one has one line.
+        let path = groups
+            .lines()
+            .find_map(|l| l.split_once(":name=systemd:").map(|(_, p)| p))
+            .or_else(|| groups.lines().find_map(|l| l.strip_prefix("0::")))?;
+        let unit = path.rsplit('/').next()?;
+        (unit.ends_with(".service") && !unit.contains(&escape(app_id))).then_some(unit)
+    }
+
+    /// `text` as a unit name spells it: bytes other than ASCII letters,
+    /// digits, `:`, `_` and `.` become `\xNN`.
+    pub(super) fn escape(text: &str) -> String {
+        text.bytes()
+            .map(|b| match b {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b':' | b'_' | b'.' => {
+                    char::from(b).to_string()
+                }
+                _ => format!("\\x{b:02x}"),
+            })
+            .collect()
+    }
+}
+
 /// What the desktop says about the user's appearance and accessibility
 /// preferences; each is `None` where the platform does not say.
 #[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1193,5 +1309,41 @@ mod tests {
             font("Hack", 10.0, 500)
         );
         assert_eq!(qt_font(",10,-1"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn another_services_cgroup_is_left_and_a_scope_or_own_service_kept() {
+        use super::scope::foreign_service;
+        let app = "dev.gossamer.waftty";
+        let tree = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/";
+        let launcher = format!("{tree}plasma-kglobalaccel.service\n");
+        assert_eq!(
+            foreign_service(&launcher, app),
+            Some("plasma-kglobalaccel.service")
+        );
+        let escaped = format!("{tree}app-feather\\x2dlauncher@autostart.service\n");
+        assert_eq!(
+            foreign_service(&escaped, app),
+            Some("app-feather\\x2dlauncher@autostart.service")
+        );
+        let launched = format!("{tree}app-dev.gossamer.waftty-60c6c0c2.scope\n");
+        assert_eq!(foreign_service(&launched, app), None);
+        let own = format!("{tree}app-dev.gossamer.waftty@autostart.service\n");
+        assert_eq!(foreign_service(&own, app), None);
+        let hybrid =
+            "12:pids:/user.slice\n1:name=systemd:/user.slice/x/app.slice/launcher.service\n0::/\n";
+        assert_eq!(foreign_service(hybrid, app), Some("launcher.service"));
+        assert_eq!(foreign_service("", app), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_unit_name_escapes_dashes_and_keeps_dots() {
+        assert_eq!(
+            super::scope::escape("dev.gossamer.waftty"),
+            "dev.gossamer.waftty"
+        );
+        assert_eq!(super::scope::escape("org.my-app"), "org.my\\x2dapp");
     }
 }

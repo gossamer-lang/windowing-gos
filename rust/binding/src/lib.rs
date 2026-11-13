@@ -1013,6 +1013,10 @@ mod desktop_bindings {
         system::screensaver_enabled()
     }
 
+    pub fn system_own_scope(app_id: String) -> Result<(), GosError> {
+        system::own_scope(&app_id).map_err(fail)
+    }
+
     pub fn system_preferences() -> String {
         to_json(&system::preferences())
     }

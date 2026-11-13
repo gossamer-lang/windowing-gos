@@ -61,6 +61,16 @@ pub fn screensaver_enabled() -> bool {
     windowing_desktop::system_screensaver_enabled()
 }
 
+/// Moves this process into a systemd scope of its own when it runs in the
+/// cgroup of a service other than `app_id`'s, such as the launcher or shortcut
+/// daemon that started it, so stopping or restarting that service leaves this
+/// process and the programs it starts running. Call it before starting any;
+/// it returns once the process has moved. Linux only; elsewhere it does
+/// nothing.
+pub fn own_scope(app_id: String) -> Result<(), errors::Error> {
+    support::ok(windowing_desktop::system_own_scope(app_id))
+}
+
 /// What the desktop says about the user's appearance and accessibility
 /// preferences; each is `None` where the platform does not say.
 #[derive(Debug, Default, PartialEq)]

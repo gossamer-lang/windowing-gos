@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.22 - A scope of its own
+
+- Linux: `system::own_scope` moves the program into a systemd scope of its own when it runs in another service's cgroup, such as a launcher's or the shortcut daemon's, so restarting that service no longer ends the program or what it started.
+
 ## 0.1.21 - Imports of its own
 
 - Each module imports what it uses, so the library builds with a Gossamer that keeps a module's imports to itself.
