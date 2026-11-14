@@ -108,7 +108,7 @@ fn hit_code(a: HitArea) -> i64 {
 /// window, and it stays open until `close` or `App::finalize`.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Window {
-    pub (package) id: WindowId
+    pub(package) id: WindowId
 }
 
 impl Window {

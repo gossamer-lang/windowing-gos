@@ -16,15 +16,15 @@ use crate::system::Theme
 use crate::window::WindowId
 
 /// The tag a plain pump answers in place of an event while a hook is set.
-pub (package) const HOOKED: i64 = -1
+pub(package) const HOOKED: i64 = -1
 
 /// The tag a pump answers when no event came.
-pub (package) const NO_EVENT: i64 = -2
+pub(package) const NO_EVENT: i64 = -2
 
 /// The event a pump answered `tag` for, `None` for a tag no event has. Its
 /// words and texts stay with the binding, which keeps the last answered
 /// event's until the next.
-pub (package) fn decode(tag: i64) -> Option<Event> {
+pub(package) fn decode(tag: i64) -> Option<Event> {
     let event = match tag {
         0 => Event::QuitRequested
         1 => Event::Terminating
@@ -163,7 +163,7 @@ pub (package) fn decode(tag: i64) -> Option<Event> {
 
 /// `event`'s words, padded to the most an event takes; `texts_of` holds
 /// its texts.
-pub (package) fn encode(event: Event) -> [i64; 9] {
+pub(package) fn encode(event: Event) -> [i64; 9] {
     match event {
         Event::QuitRequested => [0, 0, 0, 0, 0, 0, 0, 0, 0]
         Event::Terminating => [1, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -290,7 +290,7 @@ pub (package) fn encode(event: Event) -> [i64; 9] {
 }
 
 /// `event`'s texts, empty for an event without any.
-pub (package) fn texts_of(event: Event) -> Vec<String> {
+pub(package) fn texts_of(event: Event) -> Vec<String> {
     match event {
         Event::DialogClosed { choice, .. } => match choice {
             DialogChoice::Chosen { paths, .. } => paths
@@ -308,7 +308,7 @@ pub (package) fn texts_of(event: Event) -> Vec<String> {
 }
 
 /// Whether the event `tag` names has texts beside its words.
-pub (package) fn carries_texts(tag: i64) -> bool {
+pub(package) fn carries_texts(tag: i64) -> bool {
     match tag {
         14 | 42 | 43 | 65 | 66 | 68 | 73 => true
         _ => false

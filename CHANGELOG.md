@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.23 - Gossamer 0.79
+
+- Requires Gossamer 0.79.0; sources follow its formatting.
+
 ## 0.1.22 - A scope of its own
 
 - Linux: `system::own_scope` moves the program into a systemd scope of its own when it runs in another service's cgroup, such as a launcher's or the shortcut daemon's, so restarting that service no longer ends the program or what it started.
