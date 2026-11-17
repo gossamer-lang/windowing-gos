@@ -255,11 +255,16 @@ fn new_menu(mtm: MainThreadMarker, title: &str) -> Retained<NSMenu> {
     menu
 }
 
+// An SDL menu item holding back its shortcut for a program item's, with the
+// shortcut it gives back.
+type HeldBack = (
+    Retained<NSMenuItem>,
+    Retained<NSString>,
+    NSEventModifierFlags,
+);
+
 thread_local! {
-    // SDL's menu items holding back their shortcut for a program item's,
-    // with the shortcut each gives back.
-    static HELD_BACK: RefCell<Vec<(Retained<NSMenuItem>, Retained<NSString>, NSEventModifierFlags)>> =
-        const { RefCell::new(Vec::new()) };
+    static HELD_BACK: RefCell<Vec<HeldBack>> = const { RefCell::new(Vec::new()) };
 }
 
 const SHORTCUT_MODIFIERS: NSEventModifierFlags = NSEventModifierFlags::Shift

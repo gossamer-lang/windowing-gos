@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 - Clean macOS lint
+
+- macOS: the Rust core passes Clippy, so projects that lint their dependencies build on macOS.
+- CI checks the Rust core and binding on Linux, macOS and Windows.
+
 ## 0.2.0 - Gossamer 0.81, macOS menu shortcuts run once
 
 - Requires Gossamer 0.81.0.

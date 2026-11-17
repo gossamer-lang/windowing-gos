@@ -70,6 +70,63 @@ jobs:
             (cd "$dir" && gos build --release .)
           done
 
+  # The core and its binding: formatting, Clippy and the unit suite on each
+  # platform the core has code for.
+  rust:
+    name: Rust (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      # On macOS cargo's built-in git speaks TLS through SecureTransport, whose
+      # connections to skia.googlesource.com (a submodule of sdl3-sys's
+      # SDL_image) drop; the git client fetches over its own TLS stack.
+      CARGO_NET_GIT_FETCH_WITH_CLI: ${{ startsWith(matrix.os, 'macos') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SDL's build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
+            libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+      - name: Install the Gossamer toolchain (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install the Gossamer toolchain (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download $env:GOSSAMER_VERSION --repo $env:GOSSAMER_REPO --pattern 'gos-*-windows-x86_64.zip' --dir gos-dist
+          Expand-Archive -Path (Get-ChildItem gos-dist\*.zip).FullName -DestinationPath gos-dist\gos
+          $bin = (Get-ChildItem gos-dist\gos -Recurse -Filter gos.exe | Select-Object -First 1).DirectoryName
+          Add-Content $env:GITHUB_PATH $bin
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt, clippy
+      - run: gos --version
+      - name: Format, Clippy and tests
+        run: tools/check-rust.sh
+
   # A real window on each platform's own video driver: open, present a
   # frame, read it back, close through the event queue, exit 0.
   smoke:
