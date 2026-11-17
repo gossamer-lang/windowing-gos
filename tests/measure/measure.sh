@@ -13,7 +13,8 @@
 # one wakeup a second; the GL window within 25% (plus 8 MiB) of C's memory;
 # native polling at most 8 times C's and JIT events at most 20 times.
 # With MEASURE_BASELINE naming a release, native events cost no more than in
-# that release, built here and run in turn with this one on the same machine;
+# that release, built here with the Gossamer its CI pinned and run in turn
+# with this one on the same machine;
 # the program sends the events it receives, so this covers both directions.
 # Each gated throughput is the fastest of several runs taken in turn with C's.
 set -euo pipefail
@@ -41,7 +42,18 @@ trap 'git worktree remove --force "$out/baseline" 2>/dev/null || true; rm -rf "$
 base_bin=
 if [ -n "${MEASURE_BASELINE:-}" ]; then
     git worktree add -q --detach "$out/baseline" "$MEASURE_BASELINE"
-    (cd "$out/baseline/tests/measure" && "$GOS" build --release . > /dev/null)
+    # The release is built with the Gossamer its own CI pinned, so the two
+    # programs compared are the ones each release shipped as.
+    base_version=$(sed -n 's/^ *GOSSAMER_VERSION: *//p' "$out/baseline/.github/workflows/ci.yml" | head -n 1)
+    if [ "$("$GOS" --version)" = "gos ${base_version#v}" ]; then
+        (cd "$out/baseline/tests/measure" && "$GOS" build --release . > /dev/null)
+    else
+        curl -fsSL --retry 5 "https://raw.githubusercontent.com/${GOSSAMER_REPO:-gossamer-lang/gossamer}/main/scripts/install.sh" |
+            GOSSAMER_PREFIX="$out/gos-base" GOSSAMER_VERSION="$base_version" sh > /dev/null
+        (cd "$out/baseline/tests/measure" &&
+            env -u GOSSAMER_ROOT -u GOSSAMER_BINDING_PATH GOSSAMER_CACHE="$out/gos-base/cache" \
+                "$out/gos-base/bin/gos" build --release . > /dev/null)
+    fi
     base_bin=$out/baseline/tests/measure/target/release/windowing-measure
 fi
 cc -O2 $cflags c/idle.c -o "$out/idle" $libs
