@@ -60,7 +60,7 @@ impl Cursor {
 /// One of the system's cursors.
 pub fn system(kind: SystemCursor) -> Result<Cursor, errors::Error> {
     support::require_main_thread("windowing::cursor::system")
-    Ok(Cursor { handle: support::ok(windowing_desktop::cursor_system(json::encode(kind)))? })
+    Ok(Cursor { handle: support::ok(windowing_desktop::cursor_system(json::encode(kind)?))? })
 }
 
 /// A cursor from `width` x `height` RGBA pixels, its hot spot at (`hot_x`, `hot_y`).

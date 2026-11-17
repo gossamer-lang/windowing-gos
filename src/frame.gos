@@ -17,7 +17,7 @@ impl Window {
         support::require_main_thread("Window::set_frame_theme")
         let raw: u32 = self.id().into()
         let encoded = match theme {
-            Some(t) => json::encode(t)
+            Some(t) => json::encode(t)?
             None => ""
         }
         support::ok(windowing_window::window_set_frame_theme(raw as i64, encoded))

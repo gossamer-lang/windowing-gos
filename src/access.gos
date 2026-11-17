@@ -128,7 +128,7 @@ pub fn listening() -> bool {
 pub fn update(window: Window, elements: Vec<AccessElement>) -> Result<(), errors::Error> {
     crate::support::require_main_thread("access::update")
     let raw: u32 = window.id().into()
-    support::ok(windowing_desktop::access_update(raw as i64, json::encode(elements)))
+    support::ok(windowing_desktop::access_update(raw as i64, json::encode(elements)?))
 }
 
 /// Moves the screen reader's focus to element `id` of `window`, as the

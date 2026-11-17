@@ -21,7 +21,7 @@ impl App {
     /// the action where the desktop lists shortcuts.
     pub fn register_hotkey(&self, key: Key, mods: Mods, description: String) -> Result<HotkeyId, errors::Error> {
         support::require_main_thread("App::register_hotkey")
-        let id = support::ok(windowing_desktop::hotkey_register(key.code() as i64, json::encode(mods), description))?
+        let id = support::ok(windowing_desktop::hotkey_register(key.code() as i64, json::encode(mods)?, description))?
         Ok((id as u32).into())
     }
 

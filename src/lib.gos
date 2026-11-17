@@ -108,7 +108,7 @@ pub type Claim = instance::Claim
 pub type InstanceRequest = instance::Request
 
 /// The library's version.
-pub const VERSION: String = "0.1.23"
+pub const VERSION: String = "0.2.0"
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.
@@ -184,7 +184,7 @@ impl App {
     /// window, a modal, a placed window.
     pub fn window_with(&self, options: window::WindowOptions) -> Result<window::Window, errors::Error> {
         support::require_main_thread("App::window_with")
-        let id = support::ok(windowing_app::app_window(json::encode(options)))?
+        let id = support::ok(windowing_app::app_window(json::encode(options)?))?
         Ok(window::Window { id: (id as u32).into() })
     }
 

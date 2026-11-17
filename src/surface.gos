@@ -264,7 +264,7 @@ impl Window {
     pub fn gl_context(&self, options: GlOptions) -> Result<GlContext, errors::Error> {
         support::require_main_thread("Window::gl_context")
         let raw: u32 = self.id.into()
-        Ok(GlContext { handle: support::ok(windowing_window::window_gl_context(raw as i64, json::encode(options)))? })
+        Ok(GlContext { handle: support::ok(windowing_window::window_gl_context(raw as i64, json::encode(options)?))? })
     }
 
     /// A Vulkan surface for `instance` (a `VkInstance`), as its raw handle.

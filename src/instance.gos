@@ -97,7 +97,7 @@ impl os::fd::Descriptor for Listener {
 /// already running and answers `Claim::Forwarded`, after which the process
 /// exits. The claim lasts until `Listener::close` or the process ends.
 pub fn claim(app_id: String, request: Request) -> Result<Claim, errors::Error> {
-    let handle = support::ok(windowing_desktop::instance_claim(app_id, json::encode(request)))?
+    let handle = support::ok(windowing_desktop::instance_claim(app_id, json::encode(request)?))?
     if handle == 0 { Ok(Claim::Forwarded) } else { Ok(Claim::Primary(Listener { handle: handle })) }
 }
 

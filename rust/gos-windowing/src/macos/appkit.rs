@@ -2,7 +2,7 @@
 // appearance, notifications, desktop preferences, and drags. Everything here
 // runs on the main thread, where SDL runs AppKit.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
@@ -107,6 +107,13 @@ pub(crate) fn detach_tab(ns_window: *mut c_void) -> Result<()> {
 // `choose:` queues `Event::MenuSelected`. The top-level items the program
 // installed carry `MENU_BAR_TAG`, so a later install replaces them and keeps
 // the application and Window menus SDL made.
+//
+// SDL hands every key press in one of its windows to the program before
+// AppKit searches the menus, so a program's shortcut already reaches it as a
+// key event. The menus show their shortcuts, and `choose:` passes over the
+// key press that matched an item's own shortcut while an SDL window has the
+// keyboard. SDL's own menu items whose shortcut a program item shows give
+// theirs up while it does, so one key press runs one command.
 const MENU_BAR_TAG: isize = 0x676F73;
 
 define_class!(
@@ -119,13 +126,28 @@ define_class!(
         #[unsafe(method(choose:))]
         fn choose(&self, sender: Option<&NSMenuItem>) {
             let Some(item) = sender else { return };
-            let window = key_window_id().unwrap_or(0);
+            let window = key_window_id();
+            if window.is_some() && pressed_its_shortcut(self.mtm(), item) {
+                return;
+            }
             let kind = crate::menu::MENU_EVENT_TYPE.load(Ordering::Relaxed);
             // AppKit's action answers nothing; a refused event is a lost choice.
-            let _ = crate::waker::push_user_event(kind, window, item.tag() as i32, 0, 0);
+            let _ = crate::waker::push_user_event(kind, window.unwrap_or(0), item.tag() as i32, 0, 0);
         }
     }
 );
+
+// Whether AppKit chose `item` for the key press it is handling, its shortcut,
+// rather than for a click or for Return in a menu opened from the keyboard.
+fn pressed_its_shortcut(mtm: MainThreadMarker, item: &NSMenuItem) -> bool {
+    let Some(event) = NSApplication::sharedApplication(mtm).currentEvent() else {
+        return false;
+    };
+    event.r#type() == NSEventType::KeyDown
+        && item.keyEquivalent().length() > 0
+        && event.modifierFlags() & SHORTCUT_MODIFIERS
+            == item.keyEquivalentModifierMask() & SHORTCUT_MODIFIERS
+}
 
 thread_local! {
     // The target lives as long as the menu bar, which is the process.
@@ -166,6 +188,23 @@ fn key_equivalent(shortcut: &Option<Shortcut>) -> (String, NSEventModifierFlags)
         Key::Escape => "\u{1B}".to_string(),
         Key::Backspace => "\u{8}".to_string(),
         Key::Delete => "\u{7F}".to_string(),
+        Key::Insert => "\u{F727}".to_string(),
+        Key::Home => "\u{F729}".to_string(),
+        Key::End => "\u{F72B}".to_string(),
+        Key::PageUp => "\u{F72C}".to_string(),
+        Key::PageDown => "\u{F72D}".to_string(),
+        Key::F1 => "\u{F704}".to_string(),
+        Key::F2 => "\u{F705}".to_string(),
+        Key::F3 => "\u{F706}".to_string(),
+        Key::F4 => "\u{F707}".to_string(),
+        Key::F5 => "\u{F708}".to_string(),
+        Key::F6 => "\u{F709}".to_string(),
+        Key::F7 => "\u{F70A}".to_string(),
+        Key::F8 => "\u{F70B}".to_string(),
+        Key::F9 => "\u{F70C}".to_string(),
+        Key::F10 => "\u{F70D}".to_string(),
+        Key::F11 => "\u{F70E}".to_string(),
+        Key::F12 => "\u{F70F}".to_string(),
         k if k.code() < 0x4000_0000 => char::from_u32(k.code())
             .map(String::from)
             .unwrap_or_default(),
@@ -214,6 +253,72 @@ fn new_menu(mtm: MainThreadMarker, title: &str) -> Retained<NSMenu> {
     // The program's `enabled` flags decide, not AppKit's responder chain.
     menu.setAutoenablesItems(false);
     menu
+}
+
+thread_local! {
+    // SDL's menu items holding back their shortcut for a program item's,
+    // with the shortcut each gives back.
+    static HELD_BACK: RefCell<Vec<(Retained<NSMenuItem>, Retained<NSString>, NSEventModifierFlags)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+const SHORTCUT_MODIFIERS: NSEventModifierFlags = NSEventModifierFlags::Shift
+    .union(NSEventModifierFlags::Control)
+    .union(NSEventModifierFlags::Option)
+    .union(NSEventModifierFlags::Command);
+
+// A key equivalent as AppKit matches it: an uppercase letter stands for its
+// lowercase one with Shift.
+fn normalized(key: &str, mask: NSEventModifierFlags) -> (String, NSEventModifierFlags) {
+    let mut mask = mask & SHORTCUT_MODIFIERS;
+    if key.chars().any(char::is_uppercase) {
+        mask |= NSEventModifierFlags::Shift;
+    }
+    (key.to_lowercase(), mask)
+}
+
+fn shortcuts_of(entries: &[MenuEntry], out: &mut Vec<(String, NSEventModifierFlags)>) {
+    for entry in entries {
+        match entry {
+            MenuEntry::Action { shortcut, .. }
+            | MenuEntry::Check { shortcut, .. }
+            | MenuEntry::Radio { shortcut, .. } => {
+                let (key, mask) = key_equivalent(shortcut);
+                if !key.is_empty() {
+                    out.push(normalized(&key, mask))
+                }
+            }
+            MenuEntry::Submenu { entries, .. } => shortcuts_of(entries, out),
+            MenuEntry::Separator => {}
+        }
+    }
+}
+
+fn hold_back(menu: &NSMenu, taken: &[(String, NSEventModifierFlags)]) {
+    for index in 0..menu.numberOfItems() {
+        let Some(it) = menu.itemAtIndex(index) else {
+            continue;
+        };
+        if let Some(sub) = it.submenu() {
+            hold_back(&sub, taken);
+            continue;
+        }
+        let key = it.keyEquivalent();
+        let mask = it.keyEquivalentModifierMask();
+        if key.length() == 0 || !taken.contains(&normalized(&key.to_string(), mask)) {
+            continue;
+        }
+        it.setKeyEquivalent(&NSString::from_str(""));
+        HELD_BACK.with(|h| h.borrow_mut().push((it, key, mask)));
+    }
+}
+
+// Gives SDL's items back the shortcuts they held back for an earlier install.
+fn give_back() {
+    for (it, key, mask) in HELD_BACK.with(|h| std::mem::take(&mut *h.borrow_mut())) {
+        it.setKeyEquivalent(&key);
+        it.setKeyEquivalentModifierMask(mask);
+    }
 }
 
 fn fill_menu(mtm: MainThreadMarker, menu: &NSMenu, entries: &[MenuEntry]) {
@@ -281,6 +386,12 @@ pub(crate) fn install_menu_bar(menus: &[Menu]) -> Result<()> {
             bar.removeItemAtIndex(index);
         }
     }
+    give_back();
+    let mut taken = Vec::new();
+    for m in menus {
+        shortcuts_of(&m.entries, &mut taken)
+    }
+    hold_back(&bar, &taken);
     // After the application menu; the Window menu SDL adds stays last.
     for (at, m) in menus.iter().enumerate() {
         let holder = item(mtm, &m.title, None, "", MENU_BAR_TAG, true);

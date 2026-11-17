@@ -221,7 +221,7 @@ impl Window {
     /// Enters exclusive fullscreen in `mode`, one of `display::modes`.
     pub fn set_fullscreen_mode(&self, mode: Mode) -> Result<(), errors::Error> {
         support::require_main_thread("Window::set_fullscreen_mode")
-        support::ok(windowing_window::window_set_fullscreen_mode(self.raw(), json::encode(mode)))
+        support::ok(windowing_window::window_set_fullscreen_mode(self.raw(), json::encode(mode)?))
     }
 
     pub fn is_fullscreen(&self) -> bool {
@@ -303,7 +303,7 @@ impl Window {
     /// the launcher's X11 startup identity or Wayland activation token.
     pub fn focus_with_context(&self, activation: crate::instance::Activation) -> Result<(), errors::Error> {
         support::require_main_thread("Window::focus_with_context")
-        support::ok(windowing_window::window_focus_with_context(self.raw(), json::encode(activation)))
+        support::ok(windowing_window::window_focus_with_context(self.raw(), json::encode(activation)?))
     }
 
     /// Obtains a single-use Wayland token for forwarding, with a two-second
@@ -326,7 +326,7 @@ impl Window {
 
     pub fn request_attention(&self, how: Attention) -> Result<(), errors::Error> {
         support::require_main_thread("Window::request_attention")
-        support::ok(windowing_window::window_request_attention(self.raw(), json::encode(how)))
+        support::ok(windowing_window::window_request_attention(self.raw(), json::encode(how)?))
     }
 
     /// Makes `parent` the window this one belongs to, or none.
@@ -361,7 +361,7 @@ impl Window {
     /// Starts text input, describing the text to the input method.
     pub fn start_text_input_with(&self, options: TextInputOptions) -> Result<(), errors::Error> {
         support::require_main_thread("Window::start_text_input_with")
-        support::ok(windowing_window::window_start_text_input_with(self.raw(), json::encode(options)))
+        support::ok(windowing_window::window_start_text_input_with(self.raw(), json::encode(options)?))
     }
 
     pub fn stop_text_input(&self) -> Result<(), errors::Error> {
@@ -424,7 +424,7 @@ impl Window {
     /// before Windows 11 22H2, this answers an error.
     pub fn set_backdrop(&self, backdrop: Backdrop) -> Result<(), errors::Error> {
         support::require_main_thread("Window::set_backdrop")
-        support::ok(windowing_window::window_set_backdrop(self.raw(), json::encode(backdrop)))
+        support::ok(windowing_window::window_set_backdrop(self.raw(), json::encode(backdrop)?))
     }
 
     /// Waits until the platform has applied the window's pending position,

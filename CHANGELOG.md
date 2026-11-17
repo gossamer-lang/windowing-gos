@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 - Gossamer 0.81, macOS menu shortcuts run once
+
+- Requires Gossamer 0.81.0.
+- X11: the desktop's interface and menu font sizes come from the display when the desktop portal does not answer, so a program started on another session bus matches the desktop.
+- macOS: a shortcut shown in the program's menu bar runs its command once, not twice.
+- macOS: SDL's own menu items give up a shortcut the program's menus use, so Cmd+W reaches the program instead of closing the window.
+- macOS: menus show shortcuts on Home, End, Page Up, Page Down, Insert and the function keys.
+
 ## 0.1.23 - Gossamer 0.79
 
 - Requires Gossamer 0.79.0; sources follow its formatting.

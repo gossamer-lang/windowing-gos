@@ -59,7 +59,7 @@ impl crate::App {
     /// `has_native_menu_bar` tells.
     pub fn set_menu_bar(&self, menus: Vec<Menu>) -> Result<(), errors::Error> {
         crate::support::require_main_thread("App::set_menu_bar")
-        support::ok(windowing_desktop::menu_set_bar(json::encode(menus)))
+        support::ok(windowing_desktop::menu_set_bar(json::encode(menus)?))
     }
 }
 

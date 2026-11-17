@@ -600,48 +600,61 @@ mod prefs {
     }
 
     pub(super) fn read() -> Preferences {
-        let Some(connection) = crate::bus::session() else {
-            return Preferences::default();
-        };
+        let mut read = crate::bus::session()
+            .map(|connection| from_portal(&connection))
+            .unwrap_or_default();
+        // The X display publishes the desktop's interface font itself, so a
+        // program on a session bus without the desktop's portal still draws
+        // its menus and text at the desktop's size.
+        if read.font_size.is_none() || read.menu_font_size.is_none() {
+            let display_font =
+                super::x11_settings::font_name().and_then(|name| super::pango_font_points(&name));
+            read.font_size = read.font_size.or(display_font);
+            read.menu_font_size = read.menu_font_size.or(display_font);
+        }
+        read
+    }
+
+    fn from_portal(connection: &Connection) -> Preferences {
         let high_contrast = choice(setting(
-            &connection,
+            connection,
             "org.freedesktop.appearance",
             "contrast",
         ))
         .or_else(|| {
             flag(setting(
-                &connection,
+                connection,
                 "org.gnome.desktop.a11y.interface",
                 "high-contrast",
             ))
         });
         let reduced_motion = choice(setting(
-            &connection,
+            connection,
             "org.freedesktop.appearance",
             "reduced-motion",
         ))
         .or_else(|| {
             flag(setting(
-                &connection,
+                connection,
                 "org.gnome.desktop.interface",
                 "enable-animations",
             ))
             .map(|on| !on)
         });
         let accent = accent(setting(
-            &connection,
+            connection,
             "org.freedesktop.appearance",
             "accent-color",
         ));
         let text_scale = setting(
-            &connection,
+            connection,
             "org.gnome.desktop.interface",
             "text-scaling-factor",
         )
         .and_then(|v| f64::try_from(v).ok())
-        .filter(|f| *f > 0.0 && !super::x11_scale::holds_text_scale());
+        .filter(|f| *f > 0.0 && !super::x11_settings::holds_text_scale());
         let text = |namespace: &str, key: &str| {
-            setting(&connection, namespace, key).and_then(|v| String::try_from(v).ok())
+            setting(connection, namespace, key).and_then(|v| String::try_from(v).ok())
         };
         let menu_font_size = text("org.gnome.desktop.interface", "font-name")
             .and_then(|name| super::pango_font_points(&name))
@@ -826,12 +839,12 @@ mod prefs {
     }
 }
 
-// Whether the X11 content scale SDL reports already holds the desktop's text
-// factor. SDL takes that scale from, in order, its scaling hint, the
+// What the X display says about the desktop's scale and interface font.
+// SDL takes the content scale from, in order, its scaling hint, the
 // `Xft.dpi` resource, the XSETTINGS window scale or `Xft/DPI`, and
 // `GDK_SCALE`; desktops fold their text factor into the two DPI values only.
 #[cfg(free_unix)]
-mod x11_scale {
+mod x11_settings {
     use std::collections::HashMap;
     use std::ffi::{CStr, c_char};
 
@@ -855,13 +868,31 @@ mod x11_scale {
             return false;
         }
         let holds = resource_dpi(display) > 0 || {
-            let ints = xsettings(display);
+            let ints = xsettings(display).ints;
             ints.get("Gdk/WindowScalingFactor").copied().unwrap_or(-1) <= 0
                 && ints.get("Xft/DPI").copied().unwrap_or(-1) > 0
         };
         // SAFETY: display was opened above.
         unsafe { (x.XCloseDisplay)(display) };
         holds
+    }
+
+    /// The desktop's interface font as Pango names it ("Noto Sans, 10"), from
+    /// the XSETTINGS manager of the default screen, as GTK reads it on X11.
+    pub(crate) fn font_name() -> Option<String> {
+        if crate::video_driver() != "x11" {
+            return None;
+        }
+        let x = xlib()?;
+        // SAFETY: a null name opens the default display; it is closed below.
+        let display = unsafe { (x.XOpenDisplay)(std::ptr::null()) };
+        if display.is_null() {
+            return None;
+        }
+        let name = xsettings(display).texts.remove("Gtk/FontName");
+        // SAFETY: display was opened above.
+        unsafe { (x.XCloseDisplay)(display) };
+        name.filter(|n| !n.is_empty())
     }
 
     fn forced_scale() -> bool {
@@ -923,11 +954,18 @@ mod x11_scale {
         0
     }
 
-    // The integer settings the XSETTINGS manager of the default screen
-    // publishes; empty when none runs.
-    fn xsettings(display: *mut Display) -> HashMap<String, i64> {
+    // The integer and text settings an XSETTINGS manager publishes.
+    #[derive(Debug, Default)]
+    struct XSettings {
+        ints: HashMap<String, i64>,
+        texts: HashMap<String, String>,
+    }
+
+    // The settings the XSETTINGS manager of the default screen publishes;
+    // empty when none runs.
+    fn xsettings(display: *mut Display) -> XSettings {
         let Some(x) = xlib() else {
-            return HashMap::new();
+            return XSettings::default();
         };
         // SAFETY: display is live.
         let screen = unsafe { (x.XDefaultScreen)(display) };
@@ -936,7 +974,7 @@ mod x11_scale {
             (x.XGetSelectionOwner)(display, atom(x, display, &format!("_XSETTINGS_S{screen}")))
         };
         if owner == 0 {
-            return HashMap::new();
+            return XSettings::default();
         }
         let property = atom(x, display, "_XSETTINGS_SETTINGS");
         let (mut kind, mut bits, mut count, mut after) = (0, 0, 0, 0);
@@ -966,29 +1004,29 @@ mod x11_scale {
             status
         };
         if data.is_null() {
-            return HashMap::new();
+            return XSettings::default();
         }
         // SAFETY: Xlib answered `count` bytes of a format-8 property.
         let bytes = unsafe { std::slice::from_raw_parts(data, count as usize) }.to_vec();
         // SAFETY: Xlib allocated data for the caller to free.
         unsafe { (x.XFree)(data.cast()) };
         if status != 0 || bits != 8 {
-            return HashMap::new();
+            return XSettings::default();
         }
-        integers(&bytes)
+        parsed(&bytes)
     }
 
     // The XSETTINGS layout: a byte-order byte, three pad bytes, a serial and
     // a count, then per setting its type, a pad byte, the name's length and
     // name, a serial, and the value, each part padded to four bytes.
-    fn integers(bytes: &[u8]) -> HashMap<String, i64> {
-        let mut ints = HashMap::new();
+    fn parsed(bytes: &[u8]) -> XSettings {
+        let mut out = XSettings::default();
         if bytes.len() < 12 {
-            return ints;
+            return out;
         }
         let big = bytes[0] == 1;
         let Some(settings) = number(bytes, 8, 4, big) else {
-            return ints;
+            return out;
         };
         let mut at = 12;
         for _ in 0..settings {
@@ -1009,7 +1047,7 @@ mod x11_scale {
                     let Some(value) = number(bytes, at, 4, big) else {
                         break;
                     };
-                    ints.insert(
+                    out.ints.insert(
                         name,
                         if value >= 1 << 31 {
                             value - (1 << 32)
@@ -1023,13 +1061,20 @@ mod x11_scale {
                     let Some(length) = number(bytes, at, 4, big) else {
                         break;
                     };
-                    at += 4 + padded(length);
+                    let start = at + 4;
+                    if start + length > bytes.len() as i64 {
+                        break;
+                    }
+                    let text = &bytes[start as usize..(start + length) as usize];
+                    out.texts
+                        .insert(name, String::from_utf8_lossy(text).into_owned());
+                    at = start + padded(length);
                 }
                 SETTING_COLOR => at += 8,
                 _ => break,
             }
         }
-        ints
+        out
     }
 
     fn padded(length: i64) -> i64 {
@@ -1067,6 +1112,28 @@ mod x11_scale {
     #[cfg(test)]
     mod tests {
         #[test]
+        fn xsettings_text_settings_parse_beside_integers() {
+            // "Gtk/FontName" = "Noto Sans,  10", then "Xft/DPI" = 147456,
+            // big-endian, each part padded to four bytes.
+            let mut bytes = vec![1u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2];
+            bytes.extend_from_slice(&[1, 0, 0, 12]);
+            bytes.extend_from_slice(b"Gtk/FontName");
+            bytes.extend_from_slice(&[0, 0, 0, 0]);
+            bytes.extend_from_slice(&14u32.to_be_bytes());
+            bytes.extend_from_slice(b"Noto Sans,  10\0\0");
+            bytes.extend_from_slice(&[0, 0, 0, 7]);
+            bytes.extend_from_slice(b"Xft/DPI\0");
+            bytes.extend_from_slice(&[0, 0, 0, 0]);
+            bytes.extend_from_slice(&147456u32.to_be_bytes());
+            let settings = super::parsed(&bytes);
+            assert_eq!(
+                settings.texts.get("Gtk/FontName").map(String::as_str),
+                Some("Noto Sans,  10")
+            );
+            assert_eq!(settings.ints.get("Xft/DPI"), Some(&147456));
+        }
+
+        #[test]
         fn xsettings_integers_parse_in_either_byte_order() {
             // One integer setting "Xft/DPI" = 98304 (96 * 1024), little-endian.
             let mut bytes = vec![0u8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
@@ -1074,7 +1141,7 @@ mod x11_scale {
             bytes.extend_from_slice(b"Xft/DPI\0");
             bytes.extend_from_slice(&[0, 0, 0, 0]);
             bytes.extend_from_slice(&98304u32.to_le_bytes());
-            assert_eq!(super::integers(&bytes).get("Xft/DPI"), Some(&98304));
+            assert_eq!(super::parsed(&bytes).ints.get("Xft/DPI"), Some(&98304));
             assert_eq!(super::leading("  96.5dpi", true), 96.5);
             assert_eq!(super::leading("96.5", false), 96.0);
         }

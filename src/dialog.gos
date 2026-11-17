@@ -81,7 +81,7 @@ impl App {
 
 fn show(kind: String, options: FileDialog) -> Result<DialogId, errors::Error> {
     support::require_main_thread("App::*_dialog")
-    let id = support::ok(windowing_desktop::dialog_file(kind, json::encode(options)))?
+    let id = support::ok(windowing_desktop::dialog_file(kind, json::encode(options)?))?
     Ok((id as u64).into())
 }
 
@@ -89,7 +89,7 @@ fn show(kind: String, options: FileDialog) -> Result<DialogId, errors::Error> {
 /// before `init` too, to report a failure to start.
 pub fn message_box(title: String, message: String, kind: MessageKind) -> Result<(), errors::Error> {
     support::require_main_thread("windowing::dialog::message_box")
-    support::ok(windowing_desktop::dialog_message_box(title, message, json::encode(kind)))
+    support::ok(windowing_desktop::dialog_message_box(title, message, json::encode(kind)?))
 }
 
 /// A message with buttons to choose from, for `ask`.
@@ -113,6 +113,6 @@ pub fn ask(question: Question) -> Result<Option<i64>, errors::Error> {
     if question.buttons.is_empty() {
         return Err(errors::new("a question needs at least one button"))
     }
-    let chosen = support::ok(windowing_desktop::dialog_ask(json::encode(question)))?
+    let chosen = support::ok(windowing_desktop::dialog_ask(json::encode(question)?))?
     if chosen < 0 { Ok(None) } else { Ok(Some(chosen)) }
 }

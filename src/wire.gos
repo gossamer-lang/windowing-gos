@@ -692,7 +692,7 @@ mod tests {
             let words = encode(e)
             assert_eq(carries_texts(words[0]), !texts_of(e).is_empty() || words[0] == 14, "texts beside the words")
             let core = support::ok(windowing_app::event_json(words.to_vec(), texts_of(e)))?
-            assert_eq(json::render(json::parse(core)?), json::render(json::parse(json::encode(e))?), "Gossamer to the core")
+            assert_eq(json::encode(json::parse(core)?)?, json::encode(json::parse(json::encode(e)?)?)?, "Gossamer to the core")
             let back = support::ok(windowing_app::event_wire(core))?
             assert_eq(f"{decode(back):?}", f"{Some(e):?}", "the core to Gossamer")
         }

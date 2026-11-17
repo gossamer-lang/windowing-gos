@@ -32,7 +32,7 @@ impl App {
     pub fn tray(&self, icon: Option<TrayIcon>, tooltip: String) -> Result<Tray, errors::Error> {
         support::require_main_thread("App::tray")
         let encoded = match icon {
-            Some(picture) => json::encode(picture)
+            Some(picture) => json::encode(picture)?
             None => "null"
         }
         let handle = support::ok(windowing_desktop::tray_create(encoded, tooltip))?
@@ -49,7 +49,7 @@ impl Tray {
 
     pub fn set_icon(&self, icon: TrayIcon) -> Result<(), errors::Error> {
         support::require_main_thread("Tray::set_icon")
-        support::ok(windowing_desktop::tray_set_icon(self.handle, json::encode(icon)))
+        support::ok(windowing_desktop::tray_set_icon(self.handle, json::encode(icon)?))
     }
 
     pub fn set_tooltip(&self, tooltip: String) -> Result<(), errors::Error> {
@@ -61,7 +61,7 @@ impl Tray {
     /// `Event::MenuSelected`.
     pub fn set_menu(&self, entries: Vec<MenuEntry>) -> Result<(), errors::Error> {
         support::require_main_thread("Tray::set_menu")
-        support::ok(windowing_desktop::tray_set_menu(self.handle, json::encode(entries)))
+        support::ok(windowing_desktop::tray_set_menu(self.handle, json::encode(entries)?))
     }
 
     /// Removes the icon from the tray.

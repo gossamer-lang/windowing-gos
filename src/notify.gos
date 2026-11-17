@@ -37,7 +37,7 @@ impl Default for Notification {
 impl crate::App {
     /// Shows `notification` through the desktop's notification service.
     pub fn notify(&self, notification: Notification) -> Result<(), errors::Error> {
-        support::ok(windowing_desktop::notify(json::encode(notification)))
+        support::ok(windowing_desktop::notify(json::encode(notification)?))
     }
 }
 
