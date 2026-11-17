@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 - Gossamer 0.81.1
+
+- Requires Gossamer 0.81.1.
+
 ## 0.2.1 - Clean macOS lint
 
 - macOS: the Rust core passes Clippy, so projects that lint their dependencies build on macOS.
