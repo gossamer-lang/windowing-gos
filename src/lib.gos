@@ -58,6 +58,7 @@ pub type PointerSource = event::PointerSource
 pub type PenState = event::PenState
 pub type PenAxis = event::PenAxis
 pub type Window = window::Window
+pub type Borders = window::Borders
 pub type WindowOptions = window::WindowOptions
 pub type WindowId = window::WindowId
 pub type WindowKind = window::WindowKind
@@ -108,7 +109,7 @@ pub type Claim = instance::Claim
 pub type InstanceRequest = instance::Request
 
 /// The library's version.
-pub const VERSION: String = "0.3.0"
+pub const VERSION: String = "0.4.0"
 
 /// The running windowing session. There is one at a time; `finalize` ends
 /// it and closes every window. Copies refer to the same session.

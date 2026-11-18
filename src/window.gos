@@ -13,6 +13,16 @@ use crate::support
 /// A window, as events name it. No open window has the id 0.
 pub newtype WindowId = u32
 
+/// The thickness of the frame the window system draws around a window's
+/// content area, in logical units; the top is usually the title bar.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Borders {
+    pub top: i64
+    pub left: i64
+    pub bottom: i64
+    pub right: i64
+}
+
 /// What a window is for, which decides how the system decorates, stacks,
 /// and focuses it. A popup, tooltip, or modal needs a parent.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -276,6 +286,34 @@ impl Window {
     pub fn on_all_desktops(&self) -> bool {
         support::require_main_thread("Window::on_all_desktops")
         support::ok(windowing_window::window_on_all_desktops(self.raw())).unwrap_or(false)
+    }
+
+    /// Whether the window is on the virtual desktop (workspace, Space) the
+    /// user is on. A window on every desktop is, and so is every window where
+    /// the platform shows applications no desktops (Wayland).
+    pub fn on_current_desktop(&self) -> bool {
+        support::require_main_thread("Window::on_current_desktop")
+        support::ok(windowing_window::window_on_current_desktop(self.raw())).unwrap_or(true)
+    }
+
+    /// Puts the window's frame, title bar included, on `frame` in desktop
+    /// coordinates. A fullscreen or maximized window returns to a frame of
+    /// its own first, as does one the window manager keeps maximized along
+    /// one side (X11). The window is placed even when the window manager
+    /// does not settle it in time; that delay is the error returned.
+    pub fn set_frame(&self, frame: Rect) -> Result<(), errors::Error> {
+        support::require_main_thread("Window::set_frame")
+        support::ok(windowing_window::window_set_frame(self.raw(), frame.x, frame.y, frame.width, frame.height))
+    }
+
+    /// The frame the window system draws around the content area; zero on
+    /// each side it does not report (Wayland, a frameless window).
+    pub fn borders(&self) -> Borders {
+        support::require_main_thread("Window::borders")
+        match support::ok(windowing_window::window_borders(self.raw())) {
+            Ok(text) => json::decode::<Borders>(text).unwrap_or(Borders::default())
+            Err(_) => Borders::default()
+        }
     }
 
     /// The window's opacity, 0 transparent to 1 opaque.

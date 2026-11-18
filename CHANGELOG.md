@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 - Window frames and desktops
+
+- `Window::borders` answers the size of the frame the window system draws around a window.
+- `Window::on_current_desktop` answers whether a window is on the virtual desktop the user is on (X11, macOS and Windows).
+- `Window::set_frame` puts a window's frame, title bar included, on a rectangle of the desktop, out of any maximized or fullscreen state first.
+
 ## 0.3.0 - Gossamer 0.81.1
 
 - Requires Gossamer 0.81.1.

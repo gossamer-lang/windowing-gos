@@ -397,19 +397,64 @@ pub(crate) fn set_sticky(
 // _NET_WM_DESKTOP's value for a window on every desktop.
 const ALL_DESKTOPS: c_long = 0xFFFF_FFFF;
 
+/// Asks the window manager to stop keeping `window` maximized along either
+/// side; a manager that maximizes a window filling the work area's height
+/// or width holds that size against later resizes.
+pub(crate) fn release_maximized(display: *mut std::ffi::c_void, window: u64, screen: i64) {
+    let Some(x) = xlib() else {
+        return;
+    };
+    let display = display as *mut Display;
+    let vertical = atom(x, display, "_NET_WM_STATE_MAXIMIZED_VERT") as c_long;
+    let horizontal = atom(x, display, "_NET_WM_STATE_MAXIMIZED_HORZ") as c_long;
+    ask(
+        x,
+        display,
+        window as xlib::Window,
+        screen,
+        "_NET_WM_STATE",
+        [0, vertical, horizontal, 1, 0],
+    );
+}
+
+/// Whether `window` is on the desktop the user is on: true for a window on
+/// every desktop, and when the window manager keeps no desktops.
+pub(crate) fn on_current_desktop(display: *mut std::ffi::c_void, window: u64, screen: i64) -> bool {
+    let Some(x) = xlib() else {
+        return true;
+    };
+    let display = display as *mut Display;
+    // SAFETY: display is the live SDL connection.
+    let root = unsafe { (x.XRootWindow)(display, screen as i32) };
+    let Some(own) = cardinal(x, display, window as xlib::Window, "_NET_WM_DESKTOP") else {
+        return true;
+    };
+    let Some(current) = cardinal(x, display, root, "_NET_CURRENT_DESKTOP") else {
+        return true;
+    };
+    // Xlib widens the 32-bit value to a long, sign-extended or not.
+    own & ALL_DESKTOPS == ALL_DESKTOPS || own == current
+}
+
 // The desktop the user is on, or the first when the window manager says none.
 fn current_desktop(x: &Xlib, display: *mut Display, screen: i64) -> c_long {
+    // SAFETY: display is live.
+    let root = unsafe { (x.XRootWindow)(display, screen as i32) };
+    cardinal(x, display, root, "_NET_CURRENT_DESKTOP").unwrap_or(0)
+}
+
+// The one CARDINAL property `name` of `window`, when it is set.
+fn cardinal(x: &Xlib, display: *mut Display, window: xlib::Window, name: &str) -> Option<c_long> {
     let mut kind: Atom = 0;
     let (mut format, mut count, mut after) = (0, 0, 0);
     let mut data: *mut u8 = std::ptr::null_mut();
     // SAFETY: display is live; the outputs are valid storage and the data
     // Xlib answers is freed here.
     unsafe {
-        let root = (x.XRootWindow)(display, screen as i32);
         let read = (x.XGetWindowProperty)(
             display,
-            root,
-            atom(x, display, "_NET_CURRENT_DESKTOP"),
+            window,
+            atom(x, display, name),
             0,
             1,
             0,
@@ -420,15 +465,12 @@ fn current_desktop(x: &Xlib, display: *mut Display, screen: i64) -> c_long {
             &mut after,
             &mut data,
         );
-        let desktop = if read == 0 && format == 32 && count == 1 && !data.is_null() {
-            *data.cast::<c_long>()
-        } else {
-            0
-        };
+        let value = (read == 0 && format == 32 && count == 1 && !data.is_null())
+            .then(|| *data.cast::<c_long>());
         if !data.is_null() {
             (x.XFree)(data.cast());
         }
-        desktop
+        value
     }
 }
 

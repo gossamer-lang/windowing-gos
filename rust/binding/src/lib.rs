@@ -449,6 +449,30 @@ mod window_bindings {
         Ok(window(id).map_err(|e| e.to_string())?.on_all_desktops())
     }
 
+    pub fn window_on_current_desktop(id: i64) -> Result<bool, String> {
+        Ok(window(id).map_err(|e| e.to_string())?.on_current_desktop())
+    }
+
+    pub fn window_set_frame(
+        id: i64,
+        x: i64,
+        y: i64,
+        width: i64,
+        height: i64,
+    ) -> Result<(), GosError> {
+        let frame = gos_windowing::display::Rect {
+            x,
+            y,
+            width,
+            height,
+        };
+        window(id)?.set_frame(frame).map_err(fail)
+    }
+
+    pub fn window_borders(id: i64) -> Result<String, GosError> {
+        Ok(to_json(&window(id)?.borders()))
+    }
+
     pub fn window_opacity(id: i64) -> Result<f64, String> {
         Ok(window(id).map_err(|e| e.to_string())?.opacity())
     }

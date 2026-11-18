@@ -82,6 +82,13 @@ pub(crate) fn set_all_spaces(ns_window: *mut c_void, on: bool) -> Result<()> {
     Ok(())
 }
 
+/// Whether the window is on the Space the user is on; a window in every
+/// Space is.
+pub(crate) fn on_active_space(ns_window: *mut c_void) -> bool {
+    // SAFETY: SDL's live window.
+    unsafe { window(ns_window) }.is_none_or(|w| w.isOnActiveSpace())
+}
+
 /// Adds a window to another window's AppKit tab group.
 pub(crate) fn merge_tabs(ns_window: *mut c_void, other: *mut c_void) -> Result<()> {
     // SAFETY: both are SDL's live windows.
