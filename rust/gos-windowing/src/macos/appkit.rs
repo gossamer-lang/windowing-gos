@@ -114,6 +114,35 @@ pub(crate) fn frame_borders(ns_window: *mut c_void) -> Option<(i64, i64, i64, i6
     Some((unit(top), unit(left), unit(bottom), unit(right)))
 }
 
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGMainDisplayID() -> u32;
+    fn CGDisplayPixelsHigh(display: u32) -> usize;
+}
+
+/// Puts the frame of the `NSWindow` at `ns_window`, title bar included, on a
+/// rectangle in SDL's desktop coordinates, in one step and whatever AppKit's
+/// zoom state.
+pub(crate) fn set_frame(
+    ns_window: *mut c_void,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+) -> Result<()> {
+    // SAFETY: SDL's live window.
+    let w = unsafe { window(ns_window) }.ok_or_else(|| Error::new("no Cocoa window"))?;
+    // SDL's desktop y axis points down from the top of the main display.
+    // SAFETY: plain CoreGraphics queries with no preconditions.
+    let top = unsafe { CGDisplayPixelsHigh(CGMainDisplayID()) } as f64;
+    let rect = NSRect::new(
+        NSPoint::new(x as f64, top - (y + height) as f64),
+        NSSize::new(width as f64, height as f64),
+    );
+    w.setFrame_display(rect, true);
+    Ok(())
+}
+
 /// Adds a window to another window's AppKit tab group.
 pub(crate) fn merge_tabs(ns_window: *mut c_void, other: *mut c_void) -> Result<()> {
     // SAFETY: both are SDL's live windows.

@@ -80,16 +80,26 @@ impl Window {
     /// hidden window has the frame's size when this returns.
     pub fn set_frame(&self, frame: Rect) -> Result<()> {
         support::require_main_thread("Window::set_frame");
+        let mut left_state = false;
         if self.is_fullscreen() {
             self.set_fullscreen(false)?;
+            left_state = true;
         }
         if self.is_maximized() {
             self.restore()?;
+            left_state = true;
         }
         // The window manager frames a window it just mapped, and applies a
         // state change, in its own time: until it has, the frame reads as
-        // none and a restored size would replace the one set here.
-        let settled = self.sync();
+        // none and a restored size would replace the one set here. AppKit
+        // frames a window at once, so on macOS only leaving fullscreen or
+        // zoom is waited for: SDL_SyncWindow runs the event loop, which shows
+        // the new frame see-through until the window draws at its new size.
+        let settled = if cfg!(target_os = "macos") && !left_state {
+            Ok(())
+        } else {
+            self.sync()
+        };
         let b = self.borders();
         let content = (
             (frame.width - b.left - b.right).max(1),
@@ -109,6 +119,15 @@ impl Window {
         {
             crate::xlib::release_maximized(display, window, screen);
             crate::xlib::move_resize(display, window, (frame.x, frame.y), content);
+            return settled;
+        }
+        // SDL leaves the size of a window AppKit reads as zoomed alone, and
+        // AppKit takes the whole frame in one call.
+        #[cfg(target_os = "macos")]
+        if self.is_visible()
+            && let Ok(crate::surface::RawHandle::AppKit { ns_window, .. }) = self.raw_handle()
+        {
+            crate::macos::set_frame(ns_window, frame.x, frame.y, frame.width, frame.height)?;
             return settled;
         }
         self.set_size(content.0, content.1)?;
