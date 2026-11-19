@@ -414,6 +414,7 @@ mod window_bindings {
             "show" => w.show(),
             "hide" => w.hide(),
             "focus" => w.focus(),
+            "raise" => w.raise(),
             "redraw" => w.request_redraw(),
             "start-text-input" => w.start_text_input(),
             "stop-text-input" => w.stop_text_input(),

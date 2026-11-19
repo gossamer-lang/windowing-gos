@@ -5,6 +5,11 @@
 - `Window::borders` answers the size of the frame the window system draws around a window.
 - `Window::on_current_desktop` answers whether a window is on the virtual desktop the user is on (X11, macOS and Windows).
 - `Window::set_frame` puts a window's frame, title bar included, on a rectangle of the desktop, out of any maximized or fullscreen state first.
+- `Window::raise` brings a window to the front without taking the focus.
+- X11: a window shown again keeps its size, one as wide or as tall as the screen included (KWin).
+- X11: a window placed while hidden shows in its place, with no jump once it maps.
+- Linux: the systemd scope `system::own_scope` starts keeps running when the OOM killer ends one of its processes, so an application and its other children survive one child running out of memory.
+- Requires Gossamer 0.82.0.
 
 ## 0.3.0 - Gossamer 0.81.1
 

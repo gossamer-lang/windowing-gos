@@ -362,6 +362,12 @@ impl Window {
         self.act("Window::focus", "focus")
     }
 
+    /// Brings the window in front of the others without taking the keyboard
+    /// focus from the window that has it.
+    pub fn raise(&self) -> Result<(), errors::Error> {
+        self.act("Window::raise", "raise")
+    }
+
     pub fn request_attention(&self, how: Attention) -> Result<(), errors::Error> {
         support::require_main_thread("Window::request_attention")
         support::ok(windowing_window::window_request_attention(self.raw(), json::encode(how)?))

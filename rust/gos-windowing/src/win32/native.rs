@@ -72,6 +72,25 @@ pub(crate) fn set_dark_frame(hwnd: *mut c_void, dark: bool) -> Result<()> {
 
 /// Whether `hwnd` is on the virtual desktop the user is on; true when the
 /// desktop does not answer (Windows before 10, or no shell).
+/// Puts the window on top of the others without activating it.
+pub(crate) fn raise_inactive(hwnd: *mut c_void) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    // SAFETY: `hwnd` is a live window SDL created, on its own thread.
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
 pub(crate) fn on_current_desktop(hwnd: *mut c_void) -> bool {
     use windows::Win32::Foundation::HWND as Hwnd;
     use windows::Win32::System::Com::{

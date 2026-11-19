@@ -89,6 +89,31 @@ pub(crate) fn on_active_space(ns_window: *mut c_void) -> bool {
     unsafe { window(ns_window) }.is_none_or(|w| w.isOnActiveSpace())
 }
 
+/// Orders the window to the front of its level without making it key.
+pub(crate) fn order_front(ns_window: *mut c_void) {
+    // SAFETY: SDL's live window.
+    if let Some(w) = unsafe { window(ns_window) } {
+        w.orderFront(None)
+    }
+}
+
+/// The frame AppKit draws around the window's content as (top, left,
+/// bottom, right) in points, the title bar on top. SDL does not report it on
+/// macOS.
+pub(crate) fn frame_borders(ns_window: *mut c_void) -> Option<(i64, i64, i64, i64)> {
+    // SAFETY: SDL's live window.
+    let w = unsafe { window(ns_window) }?;
+    let frame = w.frame();
+    let content = w.contentRectForFrameRect(frame);
+    // AppKit's y axis points up, so the title bar is above the content's top.
+    let top = (frame.origin.y + frame.size.height) - (content.origin.y + content.size.height);
+    let left = content.origin.x - frame.origin.x;
+    let bottom = content.origin.y - frame.origin.y;
+    let right = (frame.origin.x + frame.size.width) - (content.origin.x + content.size.width);
+    let unit = |n: f64| n.round().max(0.0) as i64;
+    Some((unit(top), unit(left), unit(bottom), unit(right)))
+}
+
 /// Adds a window to another window's AppKit tab group.
 pub(crate) fn merge_tabs(ns_window: *mut c_void, other: *mut c_void) -> Result<()> {
     // SAFETY: both are SDL's live windows.
