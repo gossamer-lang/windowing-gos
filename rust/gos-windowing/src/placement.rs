@@ -91,11 +91,12 @@ impl Window {
         }
         // The window manager frames a window it just mapped, and applies a
         // state change, in its own time: until it has, the frame reads as
-        // none and a restored size would replace the one set here. AppKit
-        // frames a window at once, so on macOS only leaving fullscreen or
-        // zoom is waited for: SDL_SyncWindow runs the event loop, which shows
+        // none and a restored size would replace the one set here. A hidden
+        // window has no frame to wait for, and AppKit frames a window at
+        // once, so there and on macOS only leaving fullscreen or zoom is
+        // waited for: on macOS SDL_SyncWindow runs the event loop, which shows
         // the new frame see-through until the window draws at its new size.
-        let settled = if cfg!(target_os = "macos") && !left_state {
+        let settled = if (cfg!(target_os = "macos") || !self.is_visible()) && !left_state {
             Ok(())
         } else {
             self.sync()
@@ -141,8 +142,26 @@ impl Window {
             }) = self.raw_handle()
             {
                 crate::xlib::move_resize(display, window, (frame.x, frame.y), content);
+                // A hidden window draws its first frame at the size SDL
+                // holds. SDL_SyncWindow sleeps in steps of 10 ms until the
+                // server's report arrives, so wait for that report here (as
+                // long as SDL would) and let SDL read it at once.
+                if self.size() != content {
+                    crate::xlib::wait_configured(
+                        display,
+                        window,
+                        content,
+                        std::time::Duration::from_millis(100),
+                    );
+                    self.sync()?;
+                }
+                return settled;
             }
-            // A hidden window draws its first frame at the size SDL holds.
+            // AppKit sizes a hidden window at once, where SDL_SyncWindow
+            // would wait on it for nothing.
+            if cfg!(target_os = "macos") {
+                return settled;
+            }
             return self.sync();
         }
         settled

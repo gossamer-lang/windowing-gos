@@ -444,6 +444,82 @@ pub(crate) fn move_resize(
     }
 }
 
+/// Waits until the X server has reported `window` at `size`, for at most
+/// `limit`; true when it has. The report stays queued for SDL to read.
+pub(crate) fn wait_configured(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    (width, height): (i64, i64),
+    limit: std::time::Duration,
+) -> bool {
+    struct Wanted {
+        window: xlib::Window,
+        width: i32,
+        height: i32,
+        seen: bool,
+    }
+    // Answers false for every event, so XCheckIfEvent only looks at the queue.
+    unsafe extern "C" fn look(
+        _display: *mut Display,
+        event: *mut xlib::XEvent,
+        wanted: *mut std::os::raw::c_char,
+    ) -> xlib::Bool {
+        // SAFETY: Xlib passes a queued event, and `wanted` is the Wanted the
+        // caller below lent for this call.
+        unsafe {
+            let wanted = &mut *(wanted as *mut Wanted);
+            if (*event).get_type() == xlib::ConfigureNotify {
+                let c = (*event).configure;
+                if c.window == wanted.window && c.width == wanted.width && c.height == wanted.height
+                {
+                    wanted.seen = true;
+                }
+            }
+        }
+        xlib::False
+    }
+    let Some(x) = xlib() else {
+        return false;
+    };
+    let display = display as *mut Display;
+    let mut wanted = Wanted {
+        window: window as xlib::Window,
+        width: width.max(1) as i32,
+        height: height.max(1) as i32,
+        seen: false,
+    };
+    let deadline = std::time::Instant::now() + limit;
+    // SAFETY: display is SDL's live connection, used on the thread SDL uses
+    // it from; `look` removes nothing from the queue.
+    let fd = unsafe { (x.XConnectionNumber)(display) };
+    loop {
+        let mut event = std::mem::MaybeUninit::<xlib::XEvent>::zeroed();
+        // SAFETY: as above; XCheckIfEvent also reads what the server sent.
+        unsafe {
+            (x.XCheckIfEvent)(
+                display,
+                event.as_mut_ptr(),
+                Some(look),
+                (&raw mut wanted).cast(),
+            );
+        }
+        if wanted.seen {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        let mut poll = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd for the connection's descriptor.
+        unsafe { libc::poll(&mut poll, 1, left.as_millis().max(1) as i32) };
+    }
+}
+
 /// Fixes `window`'s size hints at its present size; the hints it had, to
 /// put back with `set_size_hints`, or `None` when it has none to keep.
 pub(crate) fn fix_size(display: *mut std::ffi::c_void, window: u64) -> Option<xlib::XSizeHints> {

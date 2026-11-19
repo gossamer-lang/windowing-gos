@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - Faster placing of hidden windows
+
+- `Window::set_frame` on a hidden window returns as soon as the window system has taken the new size, so a window docked before it shows opens without a wait (X11 and macOS).
+
 ## 0.4.0 - Window frames and desktops
 
 - `Window::borders` answers the size of the frame the window system draws around a window.
