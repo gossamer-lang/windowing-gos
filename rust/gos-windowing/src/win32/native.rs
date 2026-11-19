@@ -70,6 +70,89 @@ pub(crate) fn set_dark_frame(hwnd: *mut c_void, dark: bool) -> Result<()> {
     Ok(())
 }
 
+/// Whether `hwnd` is on the virtual desktop the user is on; true when the
+/// desktop does not answer (Windows before 10, or no shell).
+/// Puts the window on top of the others without activating it.
+pub(crate) fn raise_inactive(hwnd: *mut c_void) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    // SAFETY: `hwnd` is a live window SDL created, on its own thread.
+    unsafe {
+        SetWindowPos(
+            hwnd as HWND,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+pub(crate) fn on_current_desktop(hwnd: *mut c_void) -> bool {
+    use windows::Win32::Foundation::HWND as Hwnd;
+    use windows::Win32::System::Com::{
+        CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    };
+    use windows::Win32::UI::Shell::{IVirtualDesktopManager, VirtualDesktopManager};
+    // COM may already run on this thread (SDL starts OLE for drops); a
+    // repeat start succeeds and one in another mode still lets COM answer.
+    // SAFETY: called on the window's own thread; `hwnd` is SDL's live window.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let Ok(manager) =
+            CoCreateInstance::<_, IVirtualDesktopManager>(&VirtualDesktopManager, None, CLSCTX_ALL)
+        else {
+            return true;
+        };
+        manager
+            .IsWindowOnCurrentVirtualDesktop(Hwnd(hwnd))
+            .map_or(true, |on| on.as_bool())
+    }
+}
+
+/// The visible frame around `hwnd`'s client area in pixels: top, left,
+/// bottom and right. DWM draws the frame inside the window rectangle, whose
+/// outer band is an invisible resize border, so the frame comes from DWM's
+/// extended frame bounds.
+pub(crate) fn frame_borders(hwnd: *mut c_void) -> Option<(i64, i64, i64, i64)> {
+    use windows_sys::Win32::Foundation::{POINT, RECT};
+    use windows_sys::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+    let mut frame = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let mut client = frame;
+    let mut origin = POINT { x: 0, y: 0 };
+    // SAFETY: `hwnd` is SDL's live window; each output is valid storage of
+    // the size passed.
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            hwnd as HWND,
+            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+            (&raw mut frame).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        ) >= 0
+            && GetClientRect(hwnd as HWND, &mut client) != 0
+            && ClientToScreen(hwnd as HWND, &mut origin) != 0
+    };
+    if !read {
+        return None;
+    }
+    let (wide, tall) = (i64::from(client.right), i64::from(client.bottom));
+    let top = i64::from(origin.y - frame.top);
+    let left = i64::from(origin.x - frame.left);
+    let bottom = i64::from(frame.bottom) - (i64::from(origin.y) + tall);
+    let right = i64::from(frame.right) - (i64::from(origin.x) + wide);
+    Some((top.max(0), left.max(0), bottom.max(0), right.max(0)))
+}
+
 // The message-only window that owns the notification icon, and whether the
 // icon is in the notification area. Both belong to the main thread.
 static OWNER: AtomicIsize = AtomicIsize::new(0);

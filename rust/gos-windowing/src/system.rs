@@ -182,9 +182,12 @@ mod scope {
             MessageIterator::for_match_rule(rule, &connection, Some(16)).map_err(bus_error)?;
         let pid = std::process::id();
         let name = format!("app-{}-{pid}.scope", escape(app_id));
+        // The scope also holds every process the application launches, so the
+        // OOM killer ending one of them must leave the rest of the unit running.
         let properties: Vec<(&str, Value)> = vec![
             ("Description", Value::from(app_id)),
             ("PIDs", Value::from(vec![pid])),
+            ("OOMPolicy", Value::from("continue")),
         ];
         let auxiliary: Vec<(&str, Vec<(&str, Value)>)> = Vec::new();
         let reply = connection

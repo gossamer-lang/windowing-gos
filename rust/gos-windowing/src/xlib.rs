@@ -397,19 +397,164 @@ pub(crate) fn set_sticky(
 // _NET_WM_DESKTOP's value for a window on every desktop.
 const ALL_DESKTOPS: c_long = 0xFFFF_FFFF;
 
+/// Asks the window manager to stop keeping `window` maximized along either
+/// side; a manager that maximizes a window filling the work area's height
+/// or width holds that size against later resizes.
+pub(crate) fn release_maximized(display: *mut std::ffi::c_void, window: u64, screen: i64) {
+    let Some(x) = xlib() else {
+        return;
+    };
+    let display = display as *mut Display;
+    let vertical = atom(x, display, "_NET_WM_STATE_MAXIMIZED_VERT") as c_long;
+    let horizontal = atom(x, display, "_NET_WM_STATE_MAXIMIZED_HORZ") as c_long;
+    ask(
+        x,
+        display,
+        window as xlib::Window,
+        screen,
+        "_NET_WM_STATE",
+        [0, vertical, horizontal, 1, 0],
+    );
+}
+
+/// Puts `window`'s frame top-left at (`x`, `y`) and gives its content
+/// `width` by `height` in one request, so the window manager shows no
+/// halfway state.
+pub(crate) fn move_resize(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    (x, y): (i64, i64),
+    (width, height): (i64, i64),
+) {
+    let Some(xl) = xlib() else {
+        return;
+    };
+    let display = display as *mut Display;
+    // SAFETY: these are this live SDL window's X handles.
+    unsafe {
+        (xl.XMoveResizeWindow)(
+            display,
+            window as xlib::Window,
+            x as i32,
+            y as i32,
+            width.max(1) as u32,
+            height.max(1) as u32,
+        );
+        (xl.XFlush)(display);
+    }
+}
+
+/// Fixes `window`'s size hints at its present size; the hints it had, to
+/// put back with `set_size_hints`, or `None` when it has none to keep.
+pub(crate) fn fix_size(display: *mut std::ffi::c_void, window: u64) -> Option<xlib::XSizeHints> {
+    let x = xlib()?;
+    let display = display as *mut Display;
+    let window = window as xlib::Window;
+    // SAFETY: XSizeHints is plain C data, for which all zeros is a value.
+    let mut kept: xlib::XSizeHints = unsafe { std::mem::zeroed() };
+    let mut supplied: c_long = 0;
+    let (mut root, mut left, mut top) = (0, 0, 0);
+    let (mut width, mut height, mut border, mut depth) = (0, 0, 0, 0);
+    // SAFETY: these are this live SDL window's X handles; every output is
+    // valid storage of its type.
+    let read = unsafe {
+        (x.XGetGeometry)(
+            display,
+            window,
+            &mut root,
+            &mut left,
+            &mut top,
+            &mut width,
+            &mut height,
+            &mut border,
+            &mut depth,
+        ) != 0
+            && (x.XGetWMNormalHints)(display, window, &mut kept, &mut supplied) != 0
+    };
+    if !read {
+        return None;
+    }
+    let mut fixed = kept;
+    fixed.flags |= xlib::PMinSize | xlib::PMaxSize;
+    (fixed.min_width, fixed.max_width) = (width as i32, width as i32);
+    (fixed.min_height, fixed.max_height) = (height as i32, height as i32);
+    set_size_hints(display.cast(), window, fixed);
+    Some(kept)
+}
+
+/// Gives `window` size hints `hints`.
+pub(crate) fn set_size_hints(
+    display: *mut std::ffi::c_void,
+    window: u64,
+    mut hints: xlib::XSizeHints,
+) {
+    let Some(x) = xlib() else {
+        return;
+    };
+    let display = display as *mut Display;
+    // SAFETY: these are this live SDL window's X handles; `hints` outlives
+    // the call.
+    unsafe {
+        (x.XSetWMNormalHints)(display, window as xlib::Window, &mut hints);
+        (x.XFlush)(display);
+    }
+}
+
+/// Stacks `window` above the others without moving the focus.
+pub(crate) fn restack_above(display: *mut std::ffi::c_void, window: u64, screen: i64) {
+    let Some(x) = xlib() else {
+        return;
+    };
+    // Source 2 marks the pager-like direct request a window manager honours;
+    // detail 0 is Above, with no sibling.
+    ask(
+        x,
+        display as *mut Display,
+        window as xlib::Window,
+        screen,
+        "_NET_RESTACK_WINDOW",
+        [2, 0, 0, 0, 0],
+    );
+}
+
+/// Whether `window` is on the desktop the user is on: true for a window on
+/// every desktop, and when the window manager keeps no desktops.
+pub(crate) fn on_current_desktop(display: *mut std::ffi::c_void, window: u64, screen: i64) -> bool {
+    let Some(x) = xlib() else {
+        return true;
+    };
+    let display = display as *mut Display;
+    // SAFETY: display is the live SDL connection.
+    let root = unsafe { (x.XRootWindow)(display, screen as i32) };
+    let Some(own) = cardinal(x, display, window as xlib::Window, "_NET_WM_DESKTOP") else {
+        return true;
+    };
+    let Some(current) = cardinal(x, display, root, "_NET_CURRENT_DESKTOP") else {
+        return true;
+    };
+    // Xlib widens the 32-bit value to a long, sign-extended or not.
+    own & ALL_DESKTOPS == ALL_DESKTOPS || own == current
+}
+
 // The desktop the user is on, or the first when the window manager says none.
 fn current_desktop(x: &Xlib, display: *mut Display, screen: i64) -> c_long {
+    // SAFETY: display is live.
+    let root = unsafe { (x.XRootWindow)(display, screen as i32) };
+    cardinal(x, display, root, "_NET_CURRENT_DESKTOP").unwrap_or(0)
+}
+
+// The one CARDINAL property `name` of `window`, when it is set.
+fn cardinal(x: &Xlib, display: *mut Display, window: xlib::Window, name: &str) -> Option<c_long> {
     let mut kind: Atom = 0;
     let (mut format, mut count, mut after) = (0, 0, 0);
     let mut data: *mut u8 = std::ptr::null_mut();
     // SAFETY: display is live; the outputs are valid storage and the data
     // Xlib answers is freed here.
     unsafe {
-        let root = (x.XRootWindow)(display, screen as i32);
         let read = (x.XGetWindowProperty)(
             display,
-            root,
-            atom(x, display, "_NET_CURRENT_DESKTOP"),
+            window,
+            atom(x, display, name),
             0,
             1,
             0,
@@ -420,15 +565,12 @@ fn current_desktop(x: &Xlib, display: *mut Display, screen: i64) -> c_long {
             &mut after,
             &mut data,
         );
-        let desktop = if read == 0 && format == 32 && count == 1 && !data.is_null() {
-            *data.cast::<c_long>()
-        } else {
-            0
-        };
+        let value = (read == 0 && format == 32 && count == 1 && !data.is_null())
+            .then(|| *data.cast::<c_long>());
         if !data.is_null() {
             (x.XFree)(data.cast());
         }
-        desktop
+        value
     }
 }
 

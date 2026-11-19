@@ -378,15 +378,7 @@ impl Window {
     /// applications no way to ask, so there it stays on its own desktop.
     pub fn set_on_all_desktops(&self, on: bool) -> Result<()> {
         support::require_main_thread("Window::set_on_all_desktops");
-        // SAFETY: handle is live; the name is a NUL-terminated literal.
-        let kept = unsafe {
-            SDL_SetBooleanProperty(
-                SDL_GetWindowProperties(self.handle),
-                ALL_DESKTOPS.as_ptr(),
-                on,
-            )
-        };
-        support::check(kept, "keeping the window on every desktop")?;
+        self.set_property(ALL_DESKTOPS, on)?;
         #[cfg(free_unix)]
         if self.is_visible()
             && let Ok(crate::surface::RawHandle::Xlib {
@@ -405,14 +397,7 @@ impl Window {
     /// Whether the window was asked onto every virtual desktop.
     pub fn on_all_desktops(&self) -> bool {
         support::require_main_thread("Window::on_all_desktops");
-        // SAFETY: handle is live; the name is a NUL-terminated literal.
-        unsafe {
-            SDL_GetBooleanProperty(
-                SDL_GetWindowProperties(self.handle),
-                ALL_DESKTOPS.as_ptr(),
-                false,
-            )
-        }
+        self.property(ALL_DESKTOPS)
     }
 
     pub fn opacity(&self) -> f64 {
@@ -432,18 +417,49 @@ impl Window {
 
     pub fn show(&self) -> Result<()> {
         support::require_main_thread("Window::show");
-        // X11 window managers forget a withdrawn window's state, and SDL maps
-        // it again without restating it.
+        #[cfg(free_unix)]
+        let mut held = None;
         #[cfg(free_unix)]
         if !self.is_visible()
             && let Ok(crate::surface::RawHandle::Xlib {
                 display, window, ..
             }) = self.raw_handle()
         {
-            crate::xlib::prepare_map(display, window, self.kept_states(), &x11_windows())?;
+            // X11 window managers forget a withdrawn window's state, and SDL
+            // maps it again without restating it.
+            let states = self.kept_states();
+            crate::xlib::prepare_map(display, window, states, &x11_windows())?;
+            // SDL asks a window it shows again to leave maximized, and KWin
+            // takes a resizable window that maps as wide or as tall as the
+            // work area for maximized that way, so it would shrink the window
+            // to two thirds. A window that maps at a fixed size is neither.
+            if self.property(SHOWN) && !states.maximized && !states.fullscreen {
+                held = crate::xlib::fix_size(display, window).map(|hints| (display, window, hints));
+            }
         }
         // SAFETY: handle is live.
-        support::check(unsafe { SDL_ShowWindow(self.handle) }, "showing the window")
+        let shown = support::check(unsafe { SDL_ShowWindow(self.handle) }, "showing the window");
+        #[cfg(free_unix)]
+        if let Some((display, window, hints)) = held {
+            crate::xlib::set_size_hints(display, window, hints);
+        }
+        shown?;
+        self.set_property(SHOWN, true)
+    }
+
+    fn property(&self, name: &std::ffi::CStr) -> bool {
+        // SAFETY: handle is live; the name is a NUL-terminated literal.
+        unsafe {
+            SDL_GetBooleanProperty(SDL_GetWindowProperties(self.handle), name.as_ptr(), false)
+        }
+    }
+
+    fn set_property(&self, name: &std::ffi::CStr, value: bool) -> Result<()> {
+        // SAFETY: handle is live; the name is a NUL-terminated literal.
+        let kept = unsafe {
+            SDL_SetBooleanProperty(SDL_GetWindowProperties(self.handle), name.as_ptr(), value)
+        };
+        support::check(kept, "keeping a window property")
     }
 
     #[cfg(free_unix)]
@@ -1078,10 +1094,13 @@ struct IconPixels {
     height: i64,
 }
 
-/// The icon `App::set_icon` gave the application.
 // The window property that remembers `set_on_all_desktops`.
 const ALL_DESKTOPS: &std::ffi::CStr = c"gos.windowing.all-desktops";
 
+// The window property set once the window has shown.
+const SHOWN: &std::ffi::CStr = c"gos.windowing.shown";
+
+/// The icon `App::set_icon` gave the application.
 static APP_ICON: Mutex<Option<IconPixels>> = Mutex::new(None);
 
 /// Makes `width` x `height` RGBA pixels the icon of every open window and of
