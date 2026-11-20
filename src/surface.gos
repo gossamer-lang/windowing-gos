@@ -158,7 +158,7 @@ impl GlContext {
     /// The address of the GL function `name`, for a GL binding.
     pub fn proc_address(&self, name: String) -> Option<Ptr<ffi::c_void>> {
         let address = support::ok(windowing_window::gl_proc_address(self.handle, name)).ok()?
-        unsafe { Ptr::<ffi::c_void>::from_address(address as u64) }
+        unsafe { Ptr::<ffi::c_void>::from_address(address as% u64) }
     }
 
     pub fn destroy(&self) -> Result<(), errors::Error> {
@@ -175,7 +175,7 @@ pub struct MetalView {
 
 impl MetalView {
     pub fn destroy(&self) {
-        windowing_window::metal_view_destroy(self.view.address() as i64)
+        windowing_window::metal_view_destroy(self.view.address() as% i64)
     }
 }
 
@@ -271,8 +271,8 @@ impl Window {
     pub fn vulkan_surface(&self, instance: Ptr<ffi::c_void>) -> Result<u64, errors::Error> {
         support::require_main_thread("Window::vulkan_surface")
         let raw: u32 = self.id.into()
-        let surface = support::ok(windowing_window::window_vulkan_surface(raw as i64, instance.address() as i64))?
-        Ok(surface as u64)
+        let surface = support::ok(windowing_window::window_vulkan_surface(raw as i64, instance.address() as% i64))?
+        Ok(surface as% u64)
     }
 
     /// A Metal view and layer for a window created with `Graphics::Metal`.
@@ -282,7 +282,7 @@ impl Window {
         let text = support::ok(windowing_window::window_metal_view(raw as i64))?
         let pair = json::decode::<Addresses>(f"{{\"v\":{text}}}").map_err(|e| errors::wrap(e, "reading the Metal view"))?
         let view, layer = pair.v
-        Ok(MetalView { view: required(view as u64, "Metal view")?, layer: required(layer as u64, "Metal layer")? })
+        Ok(MetalView { view: required(view as% u64, "Metal view")?, layer: required(layer as% u64, "Metal layer")? })
     }
 }
 

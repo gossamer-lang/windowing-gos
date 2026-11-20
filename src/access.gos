@@ -136,7 +136,7 @@ pub fn update(window: Window, elements: Vec<AccessElement>) -> Result<(), errors
 pub fn focus(window: Window, id: u64) -> Result<(), errors::Error> {
     crate::support::require_main_thread("access::focus")
     let raw: u32 = window.id().into()
-    support::ok(windowing_desktop::access_focus(raw as i64, id as i64))
+    support::ok(windowing_desktop::access_focus(raw as i64, id as% i64))
 }
 
 /// Asks the screen reader to speak `text`, ahead of what it is saying when

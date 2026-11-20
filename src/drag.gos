@@ -53,7 +53,7 @@ impl crate::App {
         }
         let raw: u32 = window.id().into()
         let id = support::ok(windowing_desktop::drag_start(raw as i64, types, joined, lengths, json::encode(operation)?))?
-        Ok((id as u64).into())
+        Ok((id as% u64).into())
     }
 }
 

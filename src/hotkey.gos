@@ -22,7 +22,7 @@ impl App {
     pub fn register_hotkey(&self, key: Key, mods: Mods, description: String) -> Result<HotkeyId, errors::Error> {
         support::require_main_thread("App::register_hotkey")
         let id = support::ok(windowing_desktop::hotkey_register(key.code() as i64, json::encode(mods)?, description))?
-        Ok((id as u32).into())
+        Ok((id as% u32).into())
     }
 
     /// Gives hotkey `id` back to the desktop.

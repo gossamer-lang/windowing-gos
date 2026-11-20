@@ -208,9 +208,9 @@ fn framebuffer(app: windowing::App, win: windowing::Window) -> Result<(), errors
     frame.pixels.par_chunks_mut(frame.stride, |y, row| {
         for x in 0..width {
             let at = x * 4
-            row[at + r] = (x % 256) as u8
-            row[at + g] = (y % 256) as u8
-            row[at + b] = ((x + y) % 256) as u8
+            row[at + r] = (x % 256) as% u8
+            row[at + g] = (y % 256) as% u8
+            row[at + b] = ((x + y) % 256) as% u8
             row[at + 3] = 255
         }
     })

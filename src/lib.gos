@@ -186,7 +186,7 @@ impl App {
     pub fn window_with(&self, options: window::WindowOptions) -> Result<window::Window, errors::Error> {
         support::require_main_thread("App::window_with")
         let id = support::ok(windowing_app::app_window(json::encode(options)?))?
-        Ok(window::Window { id: (id as u32).into() })
+        Ok(window::Window { id: (id as% u32).into() })
     }
 
     /// The open window `id` names.
@@ -236,7 +236,7 @@ impl App {
     /// until the drag ends and `wait` does not return meanwhile.
     pub fn on_live_resize(&mut self, redraw: Fn(window::Window)) -> Result<(), errors::Error> {
         support::require_main_thread("App::on_live_resize")
-        support::ok(windowing_hooks::on_live_resize(|id: i64| redraw(window::Window { id: (id as u32).into() })))
+        support::ok(windowing_hooks::on_live_resize(|id: i64| redraw(window::Window { id: (id as% u32).into() })))
     }
 
     /// Removes the live-resize hook.
@@ -261,7 +261,7 @@ impl App {
     /// The key the current layout puts at `scancode`.
     pub fn key_at(&self, scancode: keys::Scancode) -> keys::Key {
         support::require_main_thread("App::key_at")
-        keys::Key::from_code(support::ok(windowing_app::app_key_at(scancode.code() as i64)).unwrap_or(0) as u32)
+        keys::Key::from_code(support::ok(windowing_app::app_key_at(scancode.code() as% i64)).unwrap_or(0) as% u32)
     }
 
     /// A key's name for showing to the user (`"Return"`, `"A"`, `"Page Up"`).

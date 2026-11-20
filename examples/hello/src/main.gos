@@ -14,8 +14,8 @@ fn draw(frame: windowing::Frame) -> windowing::Frame {
     out.pixels.par_chunks_mut(out.stride, |y, row| {
         for x in 0..width {
             let at = x * 4
-            row[at + r] = (x * 255 / width) as u8
-            row[at + g] = (y * 255 / height) as u8
+            row[at + r] = (x * 255 / width) as% u8
+            row[at + g] = (y * 255 / height) as% u8
             row[at + b] = 160
             row[at + 3] = 255
         }

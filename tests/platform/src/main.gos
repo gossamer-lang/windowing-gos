@@ -62,7 +62,7 @@ mod x11 {
         // AnyPropertyType is 0.
         let _ = unsafe { XGetWindowProperty(display, window, property, 0, 16, 0, 0, &mut kind, &mut bits, &mut items, &mut after, &mut data) }
         let bytes = data?
-        let text = String::from_utf8(unsafe { ffi::read_bytes(bytes, items as i64) }).unwrap_or("")
+        let text = String::from_utf8(unsafe { ffi::read_bytes(bytes, items as% i64) }).unwrap_or("")
         let _ = unsafe { XFree(bytes) }
         match text {
             "dark" => Some(1)

@@ -39,7 +39,7 @@ fn run() -> Result<(), errors::Error> {
                 }
                 Event::RedrawRequested { .. } => {
                     let mut frame = win.framebuffer()?
-                    let shade = (latest * 2 % 256) as u8
+                    let shade = (latest * 2 % 256) as% u8
                     frame.fill(shade, 64, 255 - shade)
                     win.present(frame)?
                     win.set_title(f"Ticker: {latest}")?

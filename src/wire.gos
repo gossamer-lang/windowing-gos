@@ -68,15 +68,15 @@ pub(package) fn decode(tag: i64) -> Option<Event> {
         39 => Event::LeftFullscreen { window: window(word(1)) }
         40 => Event::KeyDown {
             window: window(word(1))
-            key: Key::from_code(word(2) as u32)
-            scancode: Scancode::from_code(word(3) as i32)
+            key: Key::from_code(word(2) as% u32)
+            scancode: Scancode::from_code(word(3) as% i32)
             mods: mods(word(4))
             repeat: word(5) != 0
         }
         41 => Event::KeyUp {
             window: window(word(1))
-            key: Key::from_code(word(2) as u32)
-            scancode: Scancode::from_code(word(3) as i32)
+            key: Key::from_code(word(2) as% u32)
+            scancode: Scancode::from_code(word(3) as% i32)
             mods: mods(word(4))
         }
         42 => Event::Text { window: window(word(1)), text: taken_texts()[0] }
@@ -109,37 +109,37 @@ pub(package) fn decode(tag: i64) -> Option<Event> {
         47 => Event::Wheel { window: window(word(1)), dx: fl(word(2)), dy: fl(word(3)), x: fl(word(4)), y: fl(word(5)) }
         48 => Event::TouchDown {
             window: window(word(1))
-            device: word(2) as u64
-            finger: word(3) as u64
+            device: word(2) as% u64
+            finger: word(3) as% u64
             x: fl(word(4))
             y: fl(word(5))
             pressure: fl(word(6))
         }
         49 => Event::TouchMoved {
             window: window(word(1))
-            device: word(2) as u64
-            finger: word(3) as u64
+            device: word(2) as% u64
+            finger: word(3) as% u64
             x: fl(word(4))
             y: fl(word(5))
             dx: fl(word(6))
             dy: fl(word(7))
             pressure: fl(word(8))
         }
-        50 => Event::TouchUp { window: window(word(1)), device: word(2) as u64, finger: word(3) as u64, x: fl(word(4)), y: fl(word(5)) }
-        51 => Event::TouchCancelled { window: window(word(1)), device: word(2) as u64, finger: word(3) as u64 }
+        50 => Event::TouchUp { window: window(word(1)), device: word(2) as% u64, finger: word(3) as% u64, x: fl(word(4)), y: fl(word(5)) }
+        51 => Event::TouchCancelled { window: window(word(1)), device: word(2) as% u64, finger: word(3) as% u64 }
         52 => Event::PinchBegan { window: window(word(1)) }
         53 => Event::Pinch { window: window(word(1)), scale: fl(word(2)) }
         54 => Event::PinchEnded { window: window(word(1)) }
-        55 => Event::PenEntered { window: window(word(1)), pen: word(2) as u32 }
-        56 => Event::PenLeft { window: window(word(1)), pen: word(2) as u32 }
-        57 => Event::PenDown { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
-        58 => Event::PenUp { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
-        59 => Event::PenMoved { window: window(word(1)), pen: word(2) as u32, x: fl(word(4)), y: fl(word(5)), state: pen_state(word(3)) }
-        60 => Event::PenButtonDown { window: window(word(1)), pen: word(2) as u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
-        61 => Event::PenButtonUp { window: window(word(1)), pen: word(2) as u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
+        55 => Event::PenEntered { window: window(word(1)), pen: word(2) as% u32 }
+        56 => Event::PenLeft { window: window(word(1)), pen: word(2) as% u32 }
+        57 => Event::PenDown { window: window(word(1)), pen: word(2) as% u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
+        58 => Event::PenUp { window: window(word(1)), pen: word(2) as% u32, x: fl(word(4)), y: fl(word(5)), eraser: word(3) != 0 }
+        59 => Event::PenMoved { window: window(word(1)), pen: word(2) as% u32, x: fl(word(4)), y: fl(word(5)), state: pen_state(word(3)) }
+        60 => Event::PenButtonDown { window: window(word(1)), pen: word(2) as% u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
+        61 => Event::PenButtonUp { window: window(word(1)), pen: word(2) as% u32, button: word(3), x: fl(word(4)), y: fl(word(5)) }
         62 => Event::PenAxisChanged {
             window: window(word(1))
-            pen: word(2) as u32
+            pen: word(2) as% u32
             axis: axis(word(3), word(4))
             value: fl(word(5))
             x: fl(word(6))
@@ -151,7 +151,7 @@ pub(package) fn decode(tag: i64) -> Option<Event> {
         66 => Event::DroppedText { window: window(word(1)), text: taken_texts()[0], x: fl(word(2)), y: fl(word(3)) }
         67 => Event::DropEnded { window: window(word(1)), x: fl(word(2)), y: fl(word(3)) }
         68 => Event::OpenRequested { path: taken_texts()[0] }
-        69 => Event::MenuSelected { source: menu_source(word(1), word(2)), item: word(3) as u32 }
+        69 => Event::MenuSelected { source: menu_source(word(1), word(2)), item: word(3) as% u32 }
         70 => Event::DragFinished { drag: drag(word(1)), operation: operation(word(2)) }
         71 => Event::PreferencesChanged
         72 => Event::Hotkey { hotkey: hotkey(word(1)) }
@@ -184,10 +184,10 @@ pub(package) fn encode(event: Event) -> [i64; 9] {
             match choice {
                 DialogChoice::Chosen { filter, .. } => {
                     let has = if filter.is_some() { 1 } else { 0 }
-                    [14, raw as i64, 0, has, filter.unwrap_or(0), 0, 0, 0, 0]
+                    [14, raw as% i64, 0, has, filter.unwrap_or(0), 0, 0, 0, 0]
                 }
-                DialogChoice::Cancelled => [14, raw as i64, 1, 0, 0, 0, 0, 0, 0]
-                DialogChoice::Failed { .. } => [14, raw as i64, 2, 0, 0, 0, 0, 0, 0]
+                DialogChoice::Cancelled => [14, raw as% i64, 1, 0, 0, 0, 0, 0, 0]
+                DialogChoice::Failed { .. } => [14, raw as% i64, 2, 0, 0, 0, 0, 0, 0]
             }
         }
         Event::DisplayAdded { display } => [15, display_id(display), 0, 0, 0, 0, 0, 0, 0]
@@ -238,15 +238,15 @@ pub(package) fn encode(event: Event) -> [i64; 9] {
         }
         Event::Wheel { window, dx, dy, x, y } => [47, window_id(window), bits(dx), bits(dy), bits(x), bits(y), 0, 0, 0]
         Event::TouchDown { window, device, finger, x, y, pressure } => {
-            [48, window_id(window), device as i64, finger as i64, bits(x), bits(y), bits(pressure), 0, 0]
+            [48, window_id(window), device as% i64, finger as% i64, bits(x), bits(y), bits(pressure), 0, 0]
         }
         Event::TouchMoved { window, device, finger, x, y, dx, dy, pressure } => {
-            [49, window_id(window), device as i64, finger as i64, bits(x), bits(y), bits(dx), bits(dy), bits(pressure)]
+            [49, window_id(window), device as% i64, finger as% i64, bits(x), bits(y), bits(dx), bits(dy), bits(pressure)]
         }
         Event::TouchUp { window, device, finger, x, y } => {
-            [50, window_id(window), device as i64, finger as i64, bits(x), bits(y), 0, 0, 0]
+            [50, window_id(window), device as% i64, finger as% i64, bits(x), bits(y), 0, 0, 0]
         }
-        Event::TouchCancelled { window, device, finger } => [51, window_id(window), device as i64, finger as i64, 0, 0, 0, 0, 0]
+        Event::TouchCancelled { window, device, finger } => [51, window_id(window), device as% i64, finger as% i64, 0, 0, 0, 0, 0]
         Event::PinchBegan { window } => [52, window_id(window), 0, 0, 0, 0, 0, 0, 0]
         Event::Pinch { window, scale } => [53, window_id(window), bits(scale), 0, 0, 0, 0, 0, 0]
         Event::PinchEnded { window } => [54, window_id(window), 0, 0, 0, 0, 0, 0, 0]
@@ -275,7 +275,7 @@ pub(package) fn encode(event: Event) -> [i64; 9] {
         }
         Event::DragFinished { drag, operation } => {
             let raw: u64 = drag.into()
-            [70, raw as i64, operation_code(operation), 0, 0, 0, 0, 0, 0]
+            [70, raw as% i64, operation_code(operation), 0, 0, 0, 0, 0, 0]
         }
         Event::PreferencesChanged => [71, 0, 0, 0, 0, 0, 0, 0, 0]
         Event::Hotkey { hotkey } => {
@@ -324,11 +324,11 @@ fn taken_texts() -> Vec<String> {
 }
 
 fn fl(word: i64) -> f64 {
-    f64::from_bits(word as u64)
+    f64::from_bits(word as% u64)
 }
 
 fn bits(x: f64) -> i64 {
-    x.to_bits() as i64
+    x.to_bits() as% i64
 }
 
 fn flag(on: bool) -> i64 {
@@ -336,11 +336,11 @@ fn flag(on: bool) -> i64 {
 }
 
 fn hotkey(n: i64) -> crate::hotkey::HotkeyId {
-    (n as u32).into()
+    (n as% u32).into()
 }
 
 fn window(n: i64) -> WindowId {
-    (n as u32).into()
+    (n as% u32).into()
 }
 
 fn window_id(id: WindowId) -> i64 {
@@ -349,7 +349,7 @@ fn window_id(id: WindowId) -> i64 {
 }
 
 fn display(n: i64) -> DisplayId {
-    (n as u32).into()
+    (n as% u32).into()
 }
 
 fn display_id(id: DisplayId) -> i64 {
@@ -359,11 +359,11 @@ fn display_id(id: DisplayId) -> i64 {
 
 // u64 ids keep their bit pattern in an i64.
 fn dialog(n: i64) -> DialogId {
-    (n as u64).into()
+    (n as% u64).into()
 }
 
 fn drag(n: i64) -> DragId {
-    (n as u64).into()
+    (n as% u64).into()
 }
 
 fn theme(n: i64) -> Theme {
@@ -530,7 +530,7 @@ fn choice(t: Vec<String>) -> DialogChoice {
 fn menu_source(kind: i64, id: i64) -> MenuSource {
     match kind {
         0 => MenuSource::MenuBar { window: if id < 0 { None } else { Some(window(id)) } }
-        _ => MenuSource::Tray { tray: (id as u32).into() }
+        _ => MenuSource::Tray { tray: (id as% u32).into() }
     }
 }
 

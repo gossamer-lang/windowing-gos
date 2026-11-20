@@ -59,7 +59,7 @@ impl App {
     /// Stops delivery and queues Cancelled. SDL cannot portably dismiss the chooser.
     pub fn cancel_dialog(&self, id: DialogId) -> Result<(), errors::Error> {
         let raw: u64 = id.into()
-        support::ok(windowing_desktop::dialog_cancel(raw as i64))
+        support::ok(windowing_desktop::dialog_cancel(raw as% i64))
     }
 
     /// Opens the system's file-open dialog; the choice arrives as
@@ -82,7 +82,7 @@ impl App {
 fn show(kind: String, options: FileDialog) -> Result<DialogId, errors::Error> {
     support::require_main_thread("App::*_dialog")
     let id = support::ok(windowing_desktop::dialog_file(kind, json::encode(options)?))?
-    Ok((id as u64).into())
+    Ok((id as% u64).into())
 }
 
 /// Shows a message with an OK button and waits until it is dismissed. Works

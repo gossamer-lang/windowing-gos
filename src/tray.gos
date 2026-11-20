@@ -37,7 +37,7 @@ impl App {
         }
         let handle = support::ok(windowing_desktop::tray_create(encoded, tooltip))?
         let id = support::ok(windowing_desktop::tray_id(handle))?
-        Ok(Tray { handle: handle, id: (id as u32).into() })
+        Ok(Tray { handle: handle, id: (id as% u32).into() })
     }
 }
 
