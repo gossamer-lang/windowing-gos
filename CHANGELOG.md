@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3 - Gossamer 0.84.0
+
+- Requires Gossamer 0.84.0.
+
 ## 0.4.2 - Gossamer 0.82.2 casts
 
 - Event words, device and finger ids, native handles, and float bits keep their exact bits across the binding under Gossamer 0.82.2, where a plain `as` panics for a value its target cannot hold; a negative coordinate or a high handle no longer stops the program. Requires Gossamer 0.82.2.
