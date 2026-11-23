@@ -43,8 +43,8 @@ request CommandLine { directory: \"$(pwd)\", arguments: #[\"-e\", \"htop\", \"a 
 command line in $(pwd): #[\"-e\", \"htop\", \"a b\", \"\"]
 request Open { uris: #[\"file:///tmp/notes.txt\", \"file:///tmp/a%20b.txt\"] }
 activation context-token startup context-startup
-open Some(\"/tmp/notes.txt\")
-open Some(\"/tmp/a b.txt\")"
+open /tmp/notes.txt
+open /tmp/a b.txt"
     if [ "$out" = "$expected" ]; then
         echo "  ok    $tier"
     else

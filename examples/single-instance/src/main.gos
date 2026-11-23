@@ -30,7 +30,7 @@ fn run() -> Result<(), errors::Error> {
                     if !forwarded.activation.token.is_empty() { println(f"activation {forwarded.activation.token} startup {forwarded.activation.startup_id}") }
                     if let Request::Open { uris } = request {
                         for uri in uris {
-                            println(f"open {instance::uri_path(uri)}")
+                            println(f"open {instance::uri_path(uri).unwrap_or(uri)}")
                         }
                     }
                     if let Request::CommandLine { directory, arguments } = request {
