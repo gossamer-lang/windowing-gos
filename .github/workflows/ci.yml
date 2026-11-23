@@ -12,7 +12,7 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release CI installs: the one this library requires.
-  GOSSAMER_VERSION: v0.84.0
+  GOSSAMER_VERSION: v0.84.1
   # The video driver for every job that needs no display: SDL's
   # `offscreen` driver keeps windows in memory.
   SDL_VIDEO_DRIVER: offscreen
@@ -392,7 +392,7 @@ jobs:
       # Gossamer builds for FreeBSD from 0.77.0 on. A named release keeps the
       # installer from asking GitHub's API for the latest one, which answers
       # anonymous calls from shared runners with 403 once they hit its limit.
-      GOSSAMER_VERSION: v0.84.0
+      GOSSAMER_VERSION: v0.84.1
     steps:
       - uses: actions/checkout@v6
       - name: Test in FreeBSD
