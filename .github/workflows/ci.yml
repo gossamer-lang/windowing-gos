@@ -12,7 +12,7 @@ permissions:
 env:
   GOSSAMER_REPO: gossamer-lang/gossamer
   # The toolchain release CI installs: the one this library requires.
-  GOSSAMER_VERSION: v0.84.1
+  GOSSAMER_VERSION: v0.84.3
   # The video driver for every job that needs no display: SDL's
   # `offscreen` driver keeps windows in memory.
   SDL_VIDEO_DRIVER: offscreen
@@ -55,6 +55,13 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          # `llvm.sh` is the LLVM project's own apt repository installer; LLVM 22
+          # is the major rustc bundles and no Ubuntu archive carries it.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "GOS_LLVM_OPT=/usr/lib/llvm-22/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=/usr/lib/llvm-22/bin/llc" >> "$GITHUB_ENV"
       - name: Install the Gossamer toolchain
         run: |
           curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh
@@ -165,6 +172,13 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          # `llvm.sh` is the LLVM project's own apt repository installer; LLVM 22
+          # is the major rustc bundles and no Ubuntu archive carries it.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "GOS_LLVM_OPT=/usr/lib/llvm-22/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=/usr/lib/llvm-22/bin/llc" >> "$GITHUB_ENV"
       - name: Install the Gossamer toolchain (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
@@ -268,6 +282,13 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          # `llvm.sh` is the LLVM project's own apt repository installer; LLVM 22
+          # is the major rustc bundles and no Ubuntu archive carries it.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "GOS_LLVM_OPT=/usr/lib/llvm-22/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=/usr/lib/llvm-22/bin/llc" >> "$GITHUB_ENV"
       - name: Install the Gossamer toolchain (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
@@ -392,7 +413,7 @@ jobs:
       # Gossamer builds for FreeBSD from 0.77.0 on. A named release keeps the
       # installer from asking GitHub's API for the latest one, which answers
       # anonymous calls from shared runners with 403 once they hit its limit.
-      GOSSAMER_VERSION: v0.84.1
+      GOSSAMER_VERSION: v0.84.3
     steps:
       - uses: actions/checkout@v6
       - name: Test in FreeBSD
@@ -445,6 +466,13 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
             libxss-dev libxfixes-dev libxtst-dev libxkbcommon-dev libwayland-dev \
             wayland-protocols libegl-dev libgl-dev libdecor-0-dev
+          # `llvm.sh` is the LLVM project's own apt repository installer; LLVM 22
+          # is the major rustc bundles and no Ubuntu archive carries it.
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "GOS_LLVM_OPT=/usr/lib/llvm-22/bin/opt" >> "$GITHUB_ENV"
+          echo "GOS_LLC=/usr/lib/llvm-22/bin/llc" >> "$GITHUB_ENV"
       - name: Install the Gossamer toolchain
         run: |
           curl -fsSL "https://raw.githubusercontent.com/${GOSSAMER_REPO}/main/scripts/install.sh" | sh

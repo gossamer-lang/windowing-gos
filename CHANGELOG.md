@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.4.3 - Gossamer 0.84.1
+## 0.4.3 - Gossamer 0.84.3
 
-- Requires Gossamer 0.84.1, whose release builds start the binding's functions on 64-byte fetch lines, so event handling keeps its speed as the runtime grows.
+- Requires Gossamer 0.84.3, whose release builds start the binding's functions on 64-byte fetch lines, so event handling keeps its speed as the runtime grows.
 
 ## 0.4.2 - Gossamer 0.82.2 casts
 
