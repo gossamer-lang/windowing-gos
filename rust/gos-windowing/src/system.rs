@@ -160,6 +160,15 @@ mod scope {
         Error::new(format!("starting a scope: {e}"))
     }
 
+    // A word of the process's random hash keys: unique among the user's
+    // scopes, where a PID repeats across PID namespaces.
+    fn random_word() -> u64 {
+        use std::hash::{BuildHasher, Hasher};
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    }
+
     pub(super) fn own(app_id: &str) -> Result<()> {
         // Without the file there is no cgroup to leave.
         let Ok(groups) = std::fs::read_to_string("/proc/self/cgroup") else {
@@ -180,13 +189,14 @@ mod scope {
         // Subscribing before the call keeps a quick job's end from slipping past.
         let removed =
             MessageIterator::for_match_rule(rule, &connection, Some(16)).map_err(bus_error)?;
-        let pid = std::process::id();
-        let name = format!("app-{}-{pid}.scope", escape(app_id));
-        // The scope also holds every process the application launches, so the
-        // OOM killer ending one of them must leave the rest of the unit running.
+        let name = format!("app-{}-{:016x}.scope", escape(app_id), random_word());
+        // PID 0 names the caller: systemd reads its PID from the bus, in its
+        // own namespace, which a sandbox's PID namespace does not share. The
+        // scope also holds every process the application launches, so the OOM
+        // killer ending one of them must leave the rest of the unit running.
         let properties: Vec<(&str, Value)> = vec![
             ("Description", Value::from(app_id)),
-            ("PIDs", Value::from(vec![pid])),
+            ("PIDs", Value::from(vec![0u32])),
             ("OOMPolicy", Value::from("continue")),
         ];
         let auxiliary: Vec<(&str, Vec<(&str, Value)>)> = Vec::new();

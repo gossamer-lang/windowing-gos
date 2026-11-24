@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4 - Scopes from inside a sandbox
+
+- `system::own_scope` moves a process in a PID namespace of its own, as under firejail or another sandbox, into its scope: systemd takes the caller from the bus instead of a process number that names another process outside the namespace.
+- Each scope is named `app-<id>-<random>.scope`, so two copies of an application in separate namespaces never ask for the same unit.
+
 ## 0.4.3 - Gossamer 0.84.3
 
 - Requires Gossamer 0.84.3, whose release builds start the binding's functions on 64-byte fetch lines, so event handling keeps its speed as the runtime grows.
