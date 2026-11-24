@@ -160,6 +160,30 @@ mod scope {
         Error::new(format!("starting a scope: {e}"))
     }
 
+    const OOM_POLICY_SINCE: u32 = 253;
+
+    // The manager's version, read from its `Version` property.
+    fn manager_version(connection: &zbus::blocking::Connection) -> Option<u32> {
+        let reply = connection
+            .call_method(
+                Some(SYSTEMD),
+                PATH,
+                Some("org.freedesktop.DBus.Properties"),
+                "Get",
+                &(MANAGER, "Version"),
+            )
+            .ok()?;
+        let value: zbus::zvariant::OwnedValue = reply.body().deserialize().ok()?;
+        major_version(&String::try_from(value).ok()?)
+    }
+
+    /// The release number a systemd version string starts with: 249 for
+    /// "249.11-0ubuntu3.12".
+    pub(super) fn major_version(text: &str) -> Option<u32> {
+        let digits = text.split(|c: char| !c.is_ascii_digit()).next()?;
+        digits.parse().ok()
+    }
+
     // A word of the process's random hash keys: unique among the user's
     // scopes, where a PID repeats across PID namespaces.
     fn random_word() -> u64 {
@@ -191,14 +215,18 @@ mod scope {
             MessageIterator::for_match_rule(rule, &connection, Some(16)).map_err(bus_error)?;
         let name = format!("app-{}-{:016x}.scope", escape(app_id), random_word());
         // PID 0 names the caller: systemd reads its PID from the bus, in its
-        // own namespace, which a sandbox's PID namespace does not share. The
-        // scope also holds every process the application launches, so the OOM
-        // killer ending one of them must leave the rest of the unit running.
-        let properties: Vec<(&str, Value)> = vec![
+        // own namespace, which a sandbox's PID namespace does not share.
+        let mut properties: Vec<(&str, Value)> = vec![
             ("Description", Value::from(app_id)),
             ("PIDs", Value::from(vec![0u32])),
-            ("OOMPolicy", Value::from("continue")),
         ];
+        // The scope also holds every process the application launches, so the
+        // OOM killer ending one of them must leave the rest of the unit
+        // running. Scopes take OOMPolicy from systemd 253 on; an older manager
+        // refuses the whole unit when it is set, and keeps such a scope running.
+        if manager_version(&connection).is_some_and(|v| v >= OOM_POLICY_SINCE) {
+            properties.push(("OOMPolicy", Value::from("continue")));
+        }
         let auxiliary: Vec<(&str, Vec<(&str, Value)>)> = Vec::new();
         let reply = connection
             .call_method(
@@ -1425,5 +1453,16 @@ mod tests {
             "dev.gossamer.waftty"
         );
         assert_eq!(super::scope::escape("org.my-app"), "org.my\\x2dapp");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn systemd_versions_give_their_release_number() {
+        use super::scope::major_version;
+        assert_eq!(major_version("249.11-0ubuntu3.12"), Some(249));
+        assert_eq!(major_version("256"), Some(256));
+        assert_eq!(major_version("253~rc1"), Some(253));
+        assert_eq!(major_version(""), None);
+        assert_eq!(major_version("v250"), None);
     }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.5 - Scopes under systemd before 253
+
+- `system::own_scope` moves the process into its scope under systemd older than 253, as on Ubuntu 22.04 and Debian 12: the scope's OOM policy is set only where systemd takes one for a scope, and the request is no longer refused.
+
 ## 0.4.4 - Scopes from inside a sandbox
 
 - `system::own_scope` moves a process in a PID namespace of its own, as under firejail or another sandbox, into its scope: systemd takes the caller from the bus instead of a process number that names another process outside the namespace.
